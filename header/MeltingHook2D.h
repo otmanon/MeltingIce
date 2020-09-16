@@ -131,32 +131,59 @@ public:
 	void segmentDomain()
 	{
 		Eigen::VectorXd W;
-		igl::winding_number(solid.V, solid.E, domain.V, domain.W);
+		Eigen::MatrixXd BC;
+		// Compute barycenters of all tets
+		igl::barycenter(domain.V, domain.F , BC);
+		igl::winding_number(solid.V, solid.E, BC, domain.W); //winding number at baricenters
 		//normalize
-		//domain.W = (domain.W.array() - domain.W.minCoeff()) / (domain.W.maxCoeff() - domain.W.minCoeff());
+		domain.W = (domain.W.array() - domain.W.minCoeff()) / (domain.W.maxCoeff() - domain.W.minCoeff());
 		W = domain.W;
+
 		//Count how many vertices are inside Solid and outside Solid
-		Eigen::MatrixXi solidF((W.array() > 0.3f).count(), 3 ); // faces inside solid
+		Eigen::MatrixXi solidF((W.array() > 0.9f).count(), 3 ); // faces inside solid
+		Eigen::MatrixXi liquidF((W.array() < 0.9f).count(), 3); // faces inside solid
 		Eigen::VectorXd T(domain.V.rows());
 		//update Solid domain and indices 
-		int index = 0;
-		for (int i = 0; i < domain.W.rows(); i++)
+		int indexS = 0;
+		int indexL = 0;
+		for (int i = 0; i < domain.F.rows(); i++)
 		{
-			if (domain.W(i) > 0.3f) //this point is inside domain
+			if (domain.W(i) > 0.9f) //this point is inside domain
 			{
-				T(i) = 0;
-				solidF.row(index) = domain.F.row(i);
-				index++;
+				solidF.row(indexS) = domain.F.row(i);
+				indexS++;
 			}
-			else {
-				T(i) = 10;
+			else
+			{
+				liquidF.row(indexL) = domain.F.row(i);
+				indexL++;
 			}
 		}
+
+		Eigen::MatrixXd interfaceEdges;
+		Eigen::VectorXi interiorIndices, interiorIndices2, allIndices, exteriorIndices, interfaceIndices, IA, IC;
+		igl::unique(solidF, interiorIndices); //interiorIndices contains index of interior vertices
+		igl::colon(0, domain.V.rows() - 1, allIndices); //allIndices contains all indeces
+		igl::setdiff(allIndices, interiorIndices, exteriorIndices, IA); //exterior indices 
+		igl::boundary_facets(solidF, interfaceEdges); //get edges of solid
+		igl::unique(interfaceEdges, interfaceIndices); //get interface indices
+		//add interfaceIndices to exteriorIndices
+
+		//separate  boundary indices from interior indices.
+		igl::setdiff(interiorIndices, interfaceIndices, interiorIndices2, IA);
+		interiorIndices = interiorIndices2;
+
+		//set up interior/exterior Temperatures
+		Eigen::VectorXd interiorT = Eigen::VectorXd::Constant(interiorIndices.rows(), 0.0f);
+		Eigen::VectorXd exteriorT = Eigen::VectorXd::Constant(exteriorIndices.rows(), 10.0f);
+		igl::slice_into(interiorT, interiorIndices , 1, T);
+		igl::slice_into(exteriorT, exteriorIndices, 1, T);
+
 		domain.T = T;
-		Eigen::MatrixXi E; //boundary of
-		igl::boundary_facets(solidF, E);
-		Eigen::VectorXi IA, IC;  //gets indices of vertices on boundary and puts them in b
-		igl::unique(solid.E, solid.interfaceIndices, IA, IC);
+	//	Eigen::MatrixXi E; //boundary of
+	//	igl::boundary_facets(solidF, E);
+		//gets indices of vertices on boundary and puts them in b
+	//	igl::unique(solid.E, solid.interfaceIndices, IA, IC);
 		//update Liquid domain and indices
 
 
@@ -245,8 +272,6 @@ public:
 		ImGui::SliderFloat("phi", &phi, 0, 100);
 		ImGui::SliderFloat("vis scale", &vis_scale, 1e-4, 1e-1, "%.8f", 10.0f);
 	}
-
-
 
 
 	/*
