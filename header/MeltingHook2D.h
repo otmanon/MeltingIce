@@ -9,6 +9,7 @@
 #include <igl/readOBJ.h>
 #include <igl/setdiff.h>
 #include <igl/slice.h>
+#include <math.h>
 #include <igl/slice_into.h>
 #include <igl/unique.h>
 #include <igl/opengl/glfw/Viewer.h>
@@ -20,9 +21,10 @@
 #include <igl/barycenter.h>
 #include <igl/boundary_loop.h>
 #include <igl/min_quad_with_fixed.h>
+#include <igl/winding_number.h>
 #include <igl/triangle/triangulate.h>
 
-struct ThermalObject
+struct Domain
 {
 	Eigen::MatrixXd origV; //original mesh description. Remember it when resetting
 	Eigen::MatrixXi origF;
@@ -42,6 +44,7 @@ struct ThermalObject
 	Eigen::MatrixXd EM; //Edge Midpoints
 	Eigen::MatrixXd EN; //Edge Normals
 	Eigen::MatrixXd VN; //2D normal stored at each vertex by averadging incident edge normals
+	Eigen::VectorXd W; //Winding number...
 
 	/*
 	Diffuses heat by solving the heat equation by minmizing a semi-implicit time update of the Energy Functional :
@@ -74,6 +77,16 @@ struct ThermalObject
 
 	}
 };
+
+struct SubDomain
+{
+	Domain parentDomain;
+	Eigen::MatrixXi F; // Faces belonging to that domain. The indices in the faces refer to vertices in the parent Domains V matrix
+	Eigen::VectorXd T; // Temperatures associated to the vertices of this domain
+	Eigen::VectorXd Vi;// Indices from parentDomain's Vertices list that belongs to this domain
+
+};
+
 class MeltingHook2D : public PhysicsHook
 {
 public:
@@ -90,45 +103,128 @@ public:
 		//	igl::readOBJ(modelFilepath, origV, origF);
 	//	else if (modelFilepath.substr(modelFilepath.length() - 3) == ".off")
 			igl::readOFF(modelFilepath, solid.V, solid.F);
+			igl::boundary_facets(solid.F, solid.E); //Fills E with boundary edges... including nonmanifold ones which is what we have in 2D.
+
+// Find boundary vertices
+		//	Eigen::VectorXi IA, IC;  //gets indices of vertices on boundary and puts them in b
+		//	igl::unique(solid.E, solid.interfaceIndices, IA, IC);
 
 		solid.V *= 2;
 
-		retriangulateSolidMesh();
-		initSolidTemperatures();
-
-		createLiquidMesh();
-		initLiquidTemperatures();
+		triangulateDomain();
 		
-		//Assemble a "combined vectors for visualisation"
-		allV.resize(solid.V.rows() + liquid.V.rows(), solid.V.cols());
+		segmentDomain();
 		
 
-		allF.resize(solid.F.rows() + liquid.F.rows(), solid.F.cols());
-		
-
-		allT.resize(solid.V.rows() + liquid.V.rows(), 1);
-
-		updateGlobalFields();
 
 		solid.VGrad = Eigen::MatrixXd::Zero(solid.V.rows(), solid.V.cols());
 		liquid.VGrad = Eigen::MatrixXd::Zero(liquid.V.rows(), liquid.V.cols());
 
-		origV = allV;
-		origF = allF;
+
 
 		
 	}
 
 	/*
-	Updates global fields allV, allF and allT by concatenating them into one array
+	Divides the domain into solid/liquid/boundary
 	*/
-	void updateGlobalFields()
+	void segmentDomain()
 	{
-		allV << solid.V, liquid.V;
-		allF << solid.F, liquid.F.array() + solid.V.rows();
-		allT << solid.T, liquid.T;
+		Eigen::VectorXd W;
+		igl::winding_number(solid.V, solid.E, domain.V, domain.W);
+		//normalize
+		//domain.W = (domain.W.array() - domain.W.minCoeff()) / (domain.W.maxCoeff() - domain.W.minCoeff());
+		W = domain.W;
+		//Count how many vertices are inside Solid and outside Solid
+		Eigen::MatrixXi solidF((W.array() > 0.3f).count(), 3 ); // faces inside solid
+		Eigen::VectorXd T(domain.V.rows());
+		//update Solid domain and indices 
+		int index = 0;
+		for (int i = 0; i < domain.W.rows(); i++)
+		{
+			if (domain.W(i) > 0.3f) //this point is inside domain
+			{
+				T(i) = 0;
+				solidF.row(index) = domain.F.row(i);
+				index++;
+			}
+			else {
+				T(i) = 10;
+			}
+		}
+		domain.T = T;
+		Eigen::MatrixXi E; //boundary of
+		igl::boundary_facets(solidF, E);
+		Eigen::VectorXi IA, IC;  //gets indices of vertices on boundary and puts them in b
+		igl::unique(solid.E, solid.interfaceIndices, IA, IC);
+		//update Liquid domain and indices
+
 
 	}
+
+	/*
+	Given solid mesh, extracts its boundary, wraps a bounding box around it, triangulates 
+	entire domain in one sweep, while maintaining elephant boundary edges
+	*/
+	void triangulateDomain()
+	{
+		Eigen::MatrixXd V = solid.V;
+		Eigen::MatrixXi F = solid.F;
+		Eigen::MatrixXi E = solid.E;
+		Eigen::VectorXi bi;
+		float avgLength = igl::avg_edge_length(V, F);
+		// Find boundary vertices
+		igl::boundary_facets(F, E); //Fills E with boundary edges... including nonmanifold ones which is what we have in 2D.
+		Eigen::VectorXi IA, IC;  //gets indices of vertices on boundary and puts them in b
+		igl::unique(E, bi, IA, IC);
+
+		// create Surrounding Bounding Boxe
+		Eigen::RowVector3d max = V.colwise().maxCoeff();
+		Eigen::RowVector3d min = V.colwise().minCoeff();
+
+
+		float h = max(1) - min(1);
+		float w = max(0) - min(0);
+
+		int NV = V.rows();
+		int NE = E.rows();
+
+
+		V.conservativeResize( V.rows() + 4, 2);
+		E.conservativeResize(E.rows() + 4, E.cols());
+
+		//Add new vertices
+		V.row(NV + 0) = Eigen::Vector2d(max(0) + w * 0.5f, max(1) + h * 0.5f);
+		V.row(NV + 1) = Eigen::Vector2d(max(0) + w * 0.5f, min(1) - h * 0.5f);
+		V.row(NV + 2) = Eigen::Vector2d(min(0) - w * 0.5f, min(1) - h * 0.5f);
+		V.row(NV + 3) = Eigen::Vector2d(min(0) - w * 0.5f, max(1) + h * 0.5f);
+
+		// add the last few edges for the bounding box
+		E(NE + 0, 0) = NV + 0;	//top right Vert to bottom right
+		E(NE + 0, 1) = NV + 1;
+		E(NE + 1, 0) = NV + 1;	//bottom right to bottom left
+		E(NE + 1, 1) = NV + 2;
+		E(NE + 2, 0) = NV + 2;	//bottom left to top left
+		E(NE + 2, 1) = NV + 3;
+		E(NE + 3, 0) = NV + 3;	//top left to top right
+		E(NE + 3, 1) = NV + 0;
+
+
+		//horizontal edges(easy)
+		Eigen::MatrixXd V2D, V2;
+		Eigen::MatrixXi F2;
+	//	convert3DVerticesTo2D(V, V2D);
+		Eigen::MatrixXd H;
+		igl::triangle::triangulate(V, E, H, "a0.005q", V2, F2);
+		convert2DVerticesTo3D(V2, V);
+		domain.V = V;
+		domain.F = F2;
+		allV = domain.V;
+		domain.F;
+
+
+	}
+
 
 	/*
 	ImGui render... not sure how this works
@@ -150,217 +246,9 @@ public:
 		ImGui::SliderFloat("vis scale", &vis_scale, 1e-4, 1e-1, "%.8f", 10.0f);
 	}
 
-	/*
-	Generates liquid mesh by wrapping bounding box around solid. mesh, scaling box by 2
-	*/
-	void createLiquidMesh()
-	{
-
-		//make mesh for "liquid/air" which will surround our object.
-		Eigen::RowVector3d max = solid.V.colwise().maxCoeff();
-		Eigen::RowVector3d min = solid.V.colwise().minCoeff();
-		int h = max(1) - min(1);
-		int w = max(0) - min(0);
-		Eigen::MatrixXd canvasBorderV;
-		canvasBorderV.resize(4, 3);
-		canvasBorderV <<	max(0) + w * 0.5f, max(1) + h * 0.5f, 0.0f,   
-							max(0) + w * 0.5f, min(1) - h * 0.5f, 0.0f,  
-							min(0) - w * 0.5f, min(1) - h * 0.5f, 0.0f,   
-							min(0) - w * 0.5f, max(1) + h * 0.5f, 0.0f;
-
-	//	canvasBorderV *= 1.5f;
-		int numInterfaceIndices = solid.interfaceIndices.rows();
-		liquid.V = Eigen::MatrixXd::Zero(numInterfaceIndices + 4, 3);
-		int maxInterfaceVertexIndex = solid.interfaceIndices.colwise().maxCoeff()(0);
-		Eigen::VectorXi solidIndex2LiquidIndex = Eigen::VectorXi::Constant(maxInterfaceVertexIndex + 1, -1); //maps from boundary vertices in solid mesh, to boundary vertices in liquid mesh
-		
-																										 //boundary vertices in liquid mesh will be first and in order. 
-		//the index of each element in the vector will come from the index of the boundary node in the solid mesh
-		//the value at each entry in our vector is -1 if the index is not a boundary index of the solid mesh, or it is
-		// equal to i, the corresponding index in the liquid mesh
-
-		liquid.E = Eigen::MatrixXi::Zero(solid.E.rows() + 4, solid.E.cols());
-		
-		for (int i = 0; i < solid.interfaceIndices.rows() + 4; i++)
-		{
-			if (i < numInterfaceIndices)
-			{
-				liquid.V.row(i) = solid.V.row(solid.interfaceIndices(i));
-				solidIndex2LiquidIndex(solid.interfaceIndices(i)) = i;
-			}
-			else
-			{
-				liquid.V.row(i) = canvasBorderV.row(i - numInterfaceIndices);
-			}
-		}
-
-		int solidIndex1, solidIndex2, liquidIndex1, liquidIndex2;
-		
-		for (int i = 0; i < solid.E.rows(); i++)
-		{
-			solidIndex1 = solid.E(i, 0);
-			solidIndex2 = solid.E(i, 1);
-
-			//map from solid 2 liquid boundary index
-			liquidIndex1 = solidIndex2LiquidIndex(solidIndex1);
-			liquidIndex2 = solidIndex2LiquidIndex(solidIndex2);
-
-			liquid.E(i, 0) = liquidIndex1;
-			liquid.E(i, 1) = liquidIndex2;
-		}
-
-		// add the last few edges for the bounding box
-		liquid.E(solid.E.rows() + 0, 0) = numInterfaceIndices + 0;	//top right Vert to bottom right
-		liquid.E(solid.E.rows() + 0, 1) = numInterfaceIndices + 1;  
-		liquid.E(solid.E.rows() + 1, 0) = numInterfaceIndices + 1;	//bottom right to bottom left
-		liquid.E(solid.E.rows() + 1, 1) = numInterfaceIndices + 2;
-		liquid.E(solid.E.rows() + 2, 0) = numInterfaceIndices + 2;	//bottom left to top left
-		liquid.E(solid.E.rows() + 2, 1) = numInterfaceIndices + 3;
-		liquid.E(solid.E.rows() + 3, 0) = numInterfaceIndices + 3;	//top left to top right
-		liquid.E(solid.E.rows() + 3, 1) = numInterfaceIndices + 0;
 
 
-		//get vertex index that is INSIDE of solid
-		int interiorIndex = -1;
-		Eigen::Vector3d interiorVertex;
-		for (int i= 0; i < solidIndex2LiquidIndex.rows(); i++)
-		{
-			if (solidIndex2LiquidIndex(i) == -1)
-			{
-				interiorIndex = i;
-				interiorVertex = solid.V.row(i);
-			}
-		}
-		Eigen::MatrixXd liquidV2D;
-		Eigen::MatrixXd H;
-		H.resize(1, 2);
-		H << interiorVertex(0), interiorVertex(1);
-		
-		convert3DVerticesTo2D(liquid.V, liquidV2D);
-		//convert liquidV to 2D
-		Eigen::MatrixXd V2, F2;
-		igl::triangle::triangulate(liquidV2D, liquid.E, H, "a0.005q", V2, liquid.F);
-		convert2DVerticesTo3D(V2, liquid.V);
-	
-	}
 
-	/*
-	Retriangulates mesh, by taking boundary edges/vertices, and filling out the interior
-	*/
-	void retriangulateSolidMesh()
-	{
-		// Find boundary edges
-		
-		igl::boundary_facets(solid.F, solid.E); //Fills E with boundary edges... including nonmanifold ones which is what we have in 2D.
-
-		// Find boundary vertices
-		Eigen::VectorXi IA, IC;  //gets indices of vertices on boundary and puts them in b
-		igl::unique(solid.E, solid.interfaceIndices, IA, IC);
-
-		Eigen::MatrixXd H;
-		Eigen::MatrixXd V2;
-		Eigen::MatrixXi F2;
-
-
-		Eigen::MatrixXd V2D = Eigen::MatrixXd::Zero(solid.V.rows(), 2);
-
-		//Fill 2D V
-		for (int i = 0; i < V2D.rows(); i++)
-		{
-			V2D(i, 0) = solid.V(i, 0);
-			V2D(i, 1) = solid.V(i, 1);
-		}
-
-		igl::triangle::triangulate(V2D, solid.E, H, "a0.005q", V2, F2);
-		solid.V = Eigen::MatrixXd::Zero(V2.rows(), 3);
-		for (int i = 0; i < solid.V.rows(); i++)
-		{
-			solid.V(i, 0) = V2(i, 0);
-			solid.V(i, 1) = V2(i, 1);
-		}
-		solid.F = F2;
-
-	
-		//We Now have NEW boundary vertices
-		igl::boundary_facets(solid.F, solid.E);
-		igl::unique(solid.E, solid.interfaceIndices, IA, IC);
-	}
-
-	/*
-	Initializes the mesh vertices temperatures... 0 on border, -10 on interior.
-	Also fills out Tb, the boundary temperature vector.
-	*/
-	void initSolidTemperatures()
-	{
-		//T.resize(V.rows()); // each vertex has temperature of -10
-		solid.T = Eigen::VectorXd::Constant(solid.V.rows(), 1, 0.0);
-	
-		//Fills boundary temperature vertices. Will be useful for final solve
-		solid.Tb = Eigen::VectorXd::Constant(solid.interfaceIndices.rows(), solid.interfaceIndices.cols(), 0.0f); //boundary temperature always held at freezing
-		
-		//Set boundary vertices to precet temperature of 10C
-		igl::slice_into(solid.Tb, solid.interfaceIndices, 1, solid.T);
-	}
-
-	/*
-	Initializes the liquid mesh vertices' tempratures. 10 on the canvas exterior, 0 on the interior. 
-	Also fills out Tb, and finds boundary indices for the liquid mesh. 
-	*/
-	void initLiquidTemperatures()
-	{
-		float epsilon = 1e-6;
-		float maxX, maxY, minX, minY; //coordinates of "bounding box" of liquid mesj
-		liquid.T = Eigen::VectorXd::Constant(liquid.V.rows(), 1, 0);
-
-		maxX = liquid.V.colwise().maxCoeff()(0);
-		maxY = liquid.V.colwise().maxCoeff()(1);
-		minX = liquid.V.colwise().minCoeff()(0);
-		minY = liquid.V.colwise().minCoeff()(1); //this info will be useful when differentiating boundary edge on interface, to boundary edge on bounding box.
-
-		Eigen::VectorXi IA, IC;  //gets indices of vertices on boundary and puts them in b
-		igl::boundary_facets(liquid.F, liquid.E);
-		igl::unique(liquid.E, liquid.boundaryIndices, IA, IC);
-		
-		liquid.interfaceIndices.resize(liquid.boundaryIndices.rows(), solid.interfaceIndices.cols());
-		liquid.Tb.resize(liquid.boundaryIndices.rows());
-
-		auto onBoundary = [maxX, maxY, minX, minY, epsilon](Eigen::Vector3d v1)->bool 
-		{
-			if (v1.x() - maxX > -epsilon|| v1.x() - minX < epsilon || v1.y() - maxY > -epsilon || v1.y() - minY < epsilon)
-			{
-				return true;
-			}
-			else
-				return false;
-		};
-
-		//
-		// If both vertices are not bounding box vertices, then they are interface indices
-		float x1, x2, y1, y2;
-		Eigen::Vector3d v1, v2;
-		int interfaceIndex = 0;
-		for (int i = 0; i < liquid.boundaryIndices.rows(); i++)
-		{
-			v1 = liquid.V.row(liquid.boundaryIndices(i));
-			//get first index. If one of them is on boundary, both of them will be.
-			if (onBoundary(v1))
-			{ //bounding box kept at 10 on its edges
-				liquid.Tb(i) = 100;
-			}
-			else //solid/liquid interface kept at 0... for now!
-			{
-				liquid.Tb(i) = 0;
-				liquid.interfaceIndices(interfaceIndex) = liquid.boundaryIndices(i);
-				interfaceIndex++;
-			
-
-			}
-		}
-		liquid.interfaceIndices.conservativeResize(interfaceIndex, liquid.boundaryIndices.cols());
-		//Set boundary vertices to precet temperature of 10C
-		igl::slice_into(liquid.Tb, liquid.boundaryIndices, 1, liquid.T);
-	}
-	
 	/*
 	Given gradient of scalar field accross each vertex, calculates the gradient at each vertex (average from neighborin gfaces)
 	*/
@@ -535,7 +423,6 @@ public:
 				{
 					liquid.diffuseHeat(dt);
 					calculateGradientInfo();
-					updateGlobalFields();
 				}
 				if(melting_flag)
 				//	meltSurface();
@@ -546,7 +433,6 @@ public:
 		{
 			liquid.diffuseHeat(dt);
 			calculateGradientInfo();
-			updateGlobalFields();
 			//meltSurface();
 		}
 
@@ -559,23 +445,23 @@ public:
 	*/
 	virtual void updateRenderGeometry()
 	{
-		if (renderFluid)
-		{
-			renderV = liquid.V;
-			renderF = liquid.F;
-			renderT = liquid.T;
-		}
-		else if (renderSolid)
-		{
-			renderV = solid.V;
-			renderF = solid.F;
-			renderT = solid.T;
-		}
-		else {
-			renderV = allV;
-			renderF = allF;
-			renderT = allT;
-		}
+	//	if (renderFluid)
+	//	{
+	//		renderV = liquid.V;
+	///		renderF = liquid.F;
+	///		renderT = liquid.T;
+	//	}
+	///	else if (renderSolid)
+	//	{
+		//	renderV = solid.V;
+		//	renderF = solid.F;
+	//		renderT = solid.T;
+	//	}
+	//	else {
+		renderV = domain.V;
+		renderF = domain.F;
+		renderT = domain.T;
+	///	}
 
 
 	}
@@ -586,7 +472,7 @@ public:
 		viewer.data().clear();
 	//	viewer.data().clear_edges();
 		viewer.data().set_mesh(renderV, renderF);
-		viewer.data().set_data(renderT, 0, 100);
+		viewer.data().set_data(renderT, 0, 10);
 
 	//	const Eigen::RowVector3d black(0, 0, 0);
 	//	viewer.data().add_edges(solid.V, solid.V + vis_scale * solid.VGrad, black);
@@ -620,7 +506,7 @@ private:
 
 	std::string modelFilepath = "data/2dModels/elephant.off";
 
-	ThermalObject solid;
-	ThermalObject liquid;
-	
+	Domain solid;
+	Domain liquid;
+	Domain domain;
 };
