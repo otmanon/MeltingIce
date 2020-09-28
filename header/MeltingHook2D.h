@@ -23,6 +23,7 @@
 #include <igl/min_quad_with_fixed.h>
 #include <igl/winding_number.h>
 #include <igl/triangle/triangulate.h>
+#include <igl/doublearea.h>
 
 struct SubDomain
 {
@@ -68,6 +69,8 @@ struct Domain
 	Interface Boundary;
 	SubDomain S;
 	SubDomain L;
+
+	float maxX, maxY, minX, minY;
 	
 	/*
 	Diffuses heat by solving the heat equation by minmizing a semi-implicit time update of the Energy Functional :
@@ -99,9 +102,9 @@ struct Domain
 		igl::cotmatrix(V, F, C);
 		igl::massmatrix(V, F, igl::MASSMATRIX_TYPE_VORONOI, M);
 		B = -M * T; //Linear coefficients are equal to last timesteps solved Temperature field
-	//	B.setZero(); set B to zero if using steady state approx
-		Q = M - dt * C;
-	//	Q = C; set Q to simply C if using steady state approx
+		B.setZero(); // set B to zero if using steady state approx
+		//Q = M - dt * C;
+		Q = C; //set Q to simply C if using steady state approx
 		igl::min_quad_with_fixed_data<double> mqwf;
 		Eigen::VectorXd Beq;
 		Eigen::SparseMatrix<double> Aeq;
@@ -115,7 +118,7 @@ struct Domain
 	Then, moves the surface inwards based on the stefan condition:
 	Lv = ks dTs/dn - kl dTl/dn
 	*/
-	void melt(float dt)
+	void melt(float dt, float latentHeat)
 	{
 		calculateVertexGradient(); //Go through each face and distribute gradient to face's vertices.
 		calculateBoundaryMidpointsAndNormals();
@@ -127,9 +130,10 @@ struct Domain
 			Eigen::Vector3d normal = VN.row(i);
 			Eigen::Vector3d grad = (VGrad.row(i));
 			Eigen::Vector3d dTdn = normal.dot(grad) * normal;
-			DTDN.row(i) = dTdn;
+			if (!isBoundaryVertex(V.row(i))) //only melt boundary vertices
+				DTDN.row(i) = dTdn;
 		}
-		V = V - DTDN * dt;
+		V = V - DTDN * dt/latentHeat;
 	}
 
 	/*
@@ -189,28 +193,41 @@ struct Domain
 		FGrad = Eigen::Map<const Eigen::MatrixXd>((G*T).eval().data(), F.rows(), 3); //Gradient of T on each face.
 
 		VGrad = Eigen::MatrixXd::Zero(V.rows(), 3);
+
+		
 		Eigen::VectorXd VGradWeight = Eigen::VectorXd::Zero(V.rows()); //keeps track of number of faces that have contributed to vertex
+		
+		
+		//get triangle areas
+		Eigen::VectorXd A;
+		igl::doublearea(V, F, A);
+		A *= 0.5f;
+		float tArea = 1/3.0f;
+		//std::cout << A << std::endl;
 		for (int i = 0; i < FGrad.rows(); i++) //loop through faces, distribute gradients to each vertex
 		{
 			int v1_index = F(i, 0), v2_index = F(i, 1), v3_index = F(i, 2);
-
-			VGrad.row(v1_index) += FGrad.row(i);
+			//tArea = A(i)/3.0f;
+		
+			VGrad.row(v1_index) += FGrad.row(i)*tArea;
 			VGradWeight(v1_index) += 1;
 
-			VGrad.row(v2_index) += FGrad.row(i);
+			VGrad.row(v2_index) += FGrad.row(i)*tArea;
 			VGradWeight(v2_index) += 1;
 
-			VGrad.row(v3_index) += FGrad.row(i);
+			VGrad.row(v3_index) += FGrad.row(i)*tArea;
 			VGradWeight(v3_index) += 1;
 
 		}
 
-		for (int i = 0; i < VGrad.rows(); i++)
-		{
 
-			VGrad.row(i) /= VGradWeight(i);
-		}
 
+	}
+
+	bool isBoundaryVertex(Eigen::Vector3d v)
+	{
+		return (v(0) == maxX || v(0) == minX || v(1) == maxY || v(1) == minY);
+	
 	}
 };
 
@@ -239,15 +256,7 @@ public:
 		initMesh.V *= 1;
 		triangulateDomain(V, F, E);
 		
-		segmentDomain(V, E);
-		
-
-
-		
-	//	liquid.VGrad = Eigen::MatrixXd::Zero(liquid.V.rows(), liquid.V.cols());
-
-
-
+		segmentDomain(V, E, true);
 		
 	}
 
@@ -257,7 +266,7 @@ public:
 		V: num_Verts x 3 matrix of vertex coordinates
 		E: Edges representing boundary we want to perform inside/outside segmentation of
 	*/
-	void segmentDomain(Eigen::MatrixXd V, Eigen::MatrixXi E)
+	void segmentDomain(Eigen::MatrixXd V, Eigen::MatrixXi E, bool init)
 	{
 		Eigen::VectorXd W;
 		Eigen::MatrixXd BC;
@@ -292,11 +301,11 @@ public:
 
 		Eigen::MatrixXi interfaceEdges;
 		Eigen::VectorXi interiorIndices, interiorIndices2, allIndices, exteriorIndices, interfaceIndices, IA, IC;
-		igl::unique(solidF, interiorIndices); //interiorIndices contains index of interior vertices
-		igl::colon(0, D.V.rows() - 1, allIndices); //allIndices contains all indeces
-		igl::setdiff(allIndices, interiorIndices, exteriorIndices, IA); //exterior indices 
-		igl::boundary_facets(solidF, interfaceEdges); //get edges of solid
-		igl::unique(interfaceEdges, interfaceIndices); //get interface indices
+		igl::unique(solidF, interiorIndices);											//interiorIndices contains index of interior vertices
+		igl::colon(0, D.V.rows() - 1, allIndices);										//allIndices contains all indeces
+		igl::setdiff(allIndices, interiorIndices, exteriorIndices, IA);					//exterior indices 
+		igl::boundary_facets(solidF, interfaceEdges);									//get edges of solid
+		igl::unique(interfaceEdges, interfaceIndices);									//get interface indices
 
 		//separate  boundary indices from interior indices.
 		igl::setdiff(interiorIndices, interfaceIndices, interiorIndices2, IA);
@@ -323,20 +332,30 @@ public:
 
 		//Fill out subdomain info
 		D.S.F = solidF;
-		D.S.Vi = interiorIndices;
-		D.S.T = interiorT;
+		if (init)
+		{
+			D.S.Vi = interiorIndices;
+			D.S.T = interiorT;
+		}
 	
 		D.L.F = liquidF;
-		D.L.Vi = exteriorIndices;
-		D.L.T = exteriorT;
+		if (init)
+		{
+			D.L.Vi = exteriorIndices;
+			D.L.T = exteriorT;
+		}
 
 		D.I.E = interfaceEdges;
-		D.I.Vi = interfaceIndices;
-		D.I.T = interfaceT;
+		if (init)
+		{
+			D.I.Vi = interfaceIndices;
 
-		D.T = T;
-		D.VGrad = Eigen::MatrixXd::Zero(D.V.rows(), D.V.cols());
-		D.VN = Eigen::MatrixXd::Zero(D.V.rows(), D.V.cols());
+			D.I.T = interfaceT;
+		
+			D.T = T;
+			D.VGrad = Eigen::MatrixXd::Zero(D.V.rows(), D.V.cols());
+			D.VN = Eigen::MatrixXd::Zero(D.V.rows(), D.V.cols());
+		}
 	}
 
 	/*
@@ -368,11 +387,15 @@ public:
 		V.conservativeResize( V.rows() + 4, 2);
 		E.conservativeResize(E.rows() + 4, E.cols());
 
+		D.maxX = max(0) + w * 0.5f;
+		D.maxY = max(1) + h * 0.5f;
+		D.minX = min(0) - w * 0.5f;
+		D.minY = min(1) - h * 0.5f;
 		//Add new vertices
-		V.row(NV + 0) = Eigen::Vector2d(max(0) + w * 0.5f, max(1) + h * 0.5f);
-		V.row(NV + 1) = Eigen::Vector2d(max(0) + w * 0.5f, min(1) - h * 0.5f);
-		V.row(NV + 2) = Eigen::Vector2d(min(0) - w * 0.5f, min(1) - h * 0.5f);
-		V.row(NV + 3) = Eigen::Vector2d(min(0) - w * 0.5f, max(1) + h * 0.5f);
+		V.row(NV + 0) = Eigen::Vector2d(D.maxX, D.maxY);
+		V.row(NV + 1) = Eigen::Vector2d(D.maxX, D.minY);
+		V.row(NV + 2) = Eigen::Vector2d(D.minX, D.minY);
+		V.row(NV + 3) = Eigen::Vector2d(D.minX, D.maxY);
 
 		// add the last few edges for the bounding box
 		E(NE + 0, 0) = NV + 0;	//top right Vert to bottom right
@@ -413,7 +436,7 @@ public:
 		//re triangulate domain
 		retriangulateDomain();
 		//re segment domain
-		segmentDomain(V, D.I.E);
+		segmentDomain(V, D.I.E, false);
 	
 	}
 
@@ -430,11 +453,11 @@ public:
 		Eigen::MatrixXi F2;
 		convert3DVerticesTo2D(D.V, V2D);
 		Eigen::MatrixXd H;
-		igl::triangle::triangulate(V2D, boundaryEdges, H, "a0.005qYY", V2, F2);
+		igl::triangle::triangulate(V2D, boundaryEdges, H, "-yy", V2, F2);
 		convert2DVerticesTo3D(V2, D.V);
 		D.F = F2;
-		D.VGrad = Eigen::MatrixXd::Zero(D.V.rows(), D.V.cols());
-		D.VN = Eigen::MatrixXd::Zero(D.V.rows(), D.V.cols());
+	//	D.VGrad = Eigen::MatrixXd::Zero(D.V.rows(), D.V.cols());
+	//	D.VN = Eigen::MatrixXd::Zero(D.V.rows(), D.V.cols());
 	}
 
 	/*
@@ -445,13 +468,16 @@ public:
 		ImGui::Checkbox("stepping mode", &stepping_mode);
 		ImGui::Checkbox("step sim", &stepping_flag);
 
-		
+		ImGui::CollapsingHeader("Display");
 		ImGui::Checkbox("render Fluid", &renderFluid);
 		ImGui::Checkbox("render Solid", &renderSolid);
+		ImGui::Checkbox("render Normals", &renderNormals);
+		ImGui::Checkbox("render Temp Gradient", &renderTGrad);
 
 
 		ImGui::Checkbox("do diffusion", &diffusion_flag);
 		ImGui::Checkbox("do melting", &melting_flag);
+		ImGui::Checkbox("re-triangulate", &retriangulate);
 		ImGui::SliderFloat("dt", &dt, 1e-6, 1e1, "%.5f", 10.0f);
 		ImGui::SliderFloat("phi", &phi, 0, 100);
 		ImGui::SliderFloat("vis scale", &vis_scale, 1e-4, 1e-1, "%.8f", 10.0f);
@@ -502,7 +528,7 @@ public:
 					D.diffuseHeat(dt);
 				}
 				if(melting_flag)
-					D.melt(dt);
+					D.melt(dt, 10);
 				stepping_flag = false;
 			}
 		}
@@ -514,8 +540,11 @@ public:
 			}
 			if (melting_flag)
 			{
-				D.melt(dt);
-				//updateDomain();//once we melt we need to make sure our geometry is still nice. 
+				D.melt(dt, 10);
+			}
+			if (retriangulate)
+			{
+				updateDomain();//once we melt we need to make sure our geometry is still nice. 
 			}
 				
 			//calculateGradientInfo();
@@ -548,26 +577,38 @@ public:
 
 	virtual void renderRenderGeometry(igl::opengl::glfw::Viewer &viewer)
 	{
-		viewer.data().clear_edges();
+	//	viewer.data().clear_edges();
+		viewer.data().clear();
 	//	viewer.data().clear_edges();
 		viewer.data().set_mesh(renderV, renderF);
 		viewer.data().set_data(renderT, 0, 10);
 
-		const Eigen::RowVector3d green(0, 1, 0);
-		viewer.data().add_edges(D.V, D.V + vis_scale * D.VGrad, green);
+		if (renderTGrad)
+		{
+			const Eigen::RowVector3d green(0, 1, 0);
+			viewer.data().add_edges(D.V, D.V + vis_scale * D.VGrad, green);
 
-		const Eigen::RowVector3d red(1, 0, 0);
-		viewer.data().add_edges(D.V, D.V + vis_scale * D.VN, red);
+		}
+		if (renderNormals)
+		{
+			const Eigen::RowVector3d red(1, 0, 0);
+			viewer.data().add_edges(D.V, D.V + vis_scale * D.VN, red);
+		}
 	}
 
 private:
-	bool renderFluid = false;
+	bool renderFluid = true;
 	bool renderSolid = true;
+	bool renderNormals = false;
+	bool renderTGrad = false;
 
+	
 	bool stepping_mode = false;
 	bool stepping_flag = false;
 	bool melting_flag = true;
 	bool diffusion_flag = true;
+	bool retriangulate = true;
+
 	float vis_scale = 0.01;
 	float phi = 50; //flux applied at each edge
 	float dt = 1e-2; //timestep
