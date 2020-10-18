@@ -27,12 +27,12 @@ void  MeltingHook2D::initSimulation()
 	//if (modelFilepath.substr(modelFilepath.length() - 3) == ".obj")
 	//	igl::readOBJ(modelFilepath, origV, origF);
 //	else if (modelFilepath.substr(modelFilepath.length() - 3) == ".off")
-	std::string modelFilepath = "data/2dModels/triangle.obj";
+	std::string modelFilepath = "data/2dModels/plane.obj";
 	Eigen::MatrixXd V;
 	Eigen::MatrixXi F, E;
 	//igl::readOFF(modelFilepath, V, F);
 	igl::readOBJ(modelFilepath, V, F);
-	V *= 0.04f;
+	V *= 0.2f;
 	igl::boundary_facets(F, E); //Fills E with boundary edges... including nonmanifold ones which is what we have in 2D.
 
 
@@ -246,7 +246,7 @@ void  MeltingHook2D::triangulateDomain(Eigen::MatrixXd V, Eigen::MatrixXi F, Eig
 	Eigen::MatrixXi F2;
 	//	convert3DVerticesTo2D(V, V2D);
 	Eigen::MatrixXd H;
-	igl::triangle::triangulate(V, E, H, "a0.5q", V2, F2);
+	igl::triangle::triangulate(V, E, H, "a0.005q", V2, F2);
 	convert2DVerticesTo3D(V2, V);
 	D.V = V;
 	D.F = F2;
@@ -282,7 +282,7 @@ void  MeltingHook2D::retriangulateDomain()
 	Eigen::MatrixXi F2;
 	convert3DVerticesTo2D(D.V, V2D);
 	Eigen::MatrixXd H;
-	igl::triangle::triangulate(V2D, boundaryEdges, H, "S0", V2, F2);
+	igl::triangle::triangulate(V2D, boundaryEdges, H, "a0.005q", V2, F2);
 	convert2DVerticesTo3D(V2, D.V);
 	D.F = F2;
 	//	D.VGrad = Eigen::MatrixXd::Zero(D.V.rows(), D.V.cols());
@@ -393,13 +393,16 @@ void MeltingHook2D::explicitStep(float dt, float latentHeat)
 	if (diffusion_flag)
 	{
 		D.diffuseHeat(dt);
+		D.calculateQuantities(1000);
+		if (renderInterpolatedVel)
+			D.calculateInterpolationAlongEdges();
+		
 	}
-	D.calculateQuantities(1000);
+	
 	if (melting_flag)
 	{
 		D.melt(dt);
-		if (renderInterpolatedVel)
-			D.calculateInterpolationAlongEdges();
+
 	}
 	if (retriangulate)
 	{

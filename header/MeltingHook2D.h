@@ -22,7 +22,7 @@ private:
 	bool stepping_flag = false;
 	bool melting_flag = true;
 	bool diffusion_flag = true;
-	bool retriangulate = true;
+	bool retriangulate = false;
 
 	float vis_scale = 0.10;
 	float phi = 50; //flux applied at each edge

@@ -12,6 +12,24 @@
 #include <igl/colon.h>
 #include <igl/setdiff.h>
 #include <igl/point_simplex_squared_distance.h>
+
+Eigen::MatrixXd make2D(Eigen::MatrixXd mat)
+{
+	Eigen::MatrixXd mat2D(mat.rows(), 2);
+	mat2D.col(0) = mat.col(0);
+	mat2D.col(1) = mat.col(1);
+	return mat2D;
+}
+
+Eigen::MatrixXd make3D(Eigen::MatrixXd mat)
+{
+	Eigen::MatrixXd mat3D(mat.rows(), 3);
+	mat3D.setZero();
+	mat3D.col(0) = mat.col(0);
+	mat3D.col(1) = mat.col(1);
+	return mat3D;
+
+}
 void Domain::diffuseHeat(float dt)
 {
 	Eigen::VectorXi boundaryIndices;
@@ -44,24 +62,11 @@ void Domain::diffuseHeat(float dt)
 
 void Domain::melt(float dt)
 {
-	bool stupidMethod = false;
-	bool smartMethod = true;
-	bool okayMethod = false;
-	if (stupidMethod)
-	{
-		distributeEdgeVpToVertices(); 
-	}
-	else if (smartMethod)
-	{
-		solveForVertexVelSmart();
-	}
 
-
-	V += VertexVel * dt;
+	V += VertexVel * 0.3;// dt;
 
 
 }
-
 
 
 void Domain::solveForVertexVelSmart()
@@ -71,80 +76,154 @@ void Domain::solveForVertexVelSmart()
 	fillA();
 
 	Eigen::VectorXd vp = flattenMat2Vec(Vp);
-	Eigen::MatrixXd Vp2 = expandVec2Mat(vp, Vp.cols());
-	Eigen::VectorXd b = I.A*vp;
-	
+	//Eigen::MatrixXd Vp2 = expandVec2Mat(vp, 2);
+	Eigen::VectorXd vpn = projectVecs2Normals(Vp, NormalsE );
+	Eigen::VectorXd b = I.A*vpn;
+	Eigen::VectorXd v;
+	/*
 	Eigen::ConjugateGradient<Eigen::SparseMatrix<double>> solver;
 	solver.compute(I.M);
-	Eigen::VectorXd v = solver.solve(b);
-	/*
-	Eigen::VectorXd v;
-	Eigen::SparseMatrix<double> Aeq, Q;
-	Eigen::VectorXd Beq, B,  zbc;
-	Eigen::VectorXi zb,all;
-	Eigen::VectorXi boundaryIndices, IA;
-	igl::colon(0, V.rows() - 1, all);
-	igl::setdiff(all, I.Vi, boundaryIndices, IA);
-	zb.resize(boundaryIndices.rows() * 3, 1);
-	for (int i = 0; i < boundaryIndices.rows(); i++)
-	{
-		zb(3 * i + 0) = 3 * boundaryIndices(i) + 0;
-		zb(3 * i + 1) = 3 * boundaryIndices(i) + 1;
-		zb(3 * i + 2) = 3 * boundaryIndices(i) + 2;
-	}
-	zbc.resize(zb.rows(), 1);
-	zbc.setZero();
-
-	Q = 2.0* I.M;
-	B = -2.0* I.A*vp;
-
-	Eigen::MatrixXd QD(Q);
-
-	igl::min_quad_with_fixed_data<double> mqwf;
-
-	//Now we must index vertex Vels back to the real world
-	igl::min_quad_with_fixed_precompute(Q, zb, Aeq, false, mqwf);
-	igl::min_quad_with_fixed_solve(mqwf, B, zbc, Beq, v);
+	v = solver.solve(b);
 	*/
-	
-	//Eigen::VectorXd globalvp; globalvp.resize(3 * V.rows());
-	//globalvp.setZero();
-	//int globali;
-	//for (int i = 0; i < I.localToGlobalV.rows(); i++)
-	//{
-	//	globali = I.localToGlobalV(i);
-	//	globalvp(3 * globali + 0) = v(3*i + 0);
-	//	globalvp(3 * globali + 1) = v(3*i + 1);
-	//	globalvp(3 * globali + 2) = v(3*i + 2);
 
-	//}
-	VertexVel = expandVec2Mat(v, V.cols());
+	Eigen::BiCGSTAB<Eigen::SparseMatrix<double>> solver;
+	solver.compute(I.M.transpose());
+	v = solver.solve(b);
 
-}
 
-void Domain::fillL()
-{
-	I.L.resize(3 * EV.rows(), 3 * EV.cols());
-	I.L.setZero();
-	float length;
-	int v1i, v2i;
-	for (int i = 0; i < EV.rows(); i++)
-	{
-		v1i = (I.E(i, 0));
-		v2i = (I.E(i, 1));
-		length = edgeLength(v1i, v2i);
 
-		v1i = I.globalToLocalV(v1i);
-		v2i = I.globalToLocalV(v2i);
 
-		I.L.coeffRef(3 * I.Ei(i) + 0, 3 * I.Ei(i) + 0) = length;
-		I.L.coeffRef(3 * I.Ei(i) + 1, 3 * I.Ei(i) + 1) = length;
-		I.L.coeffRef(3 * I.Ei(i) + 2, 3 * I.Ei(i) + 2) = length;
+	VertexVel = expandVec2Mat(v, 3);
+	//VertexVel = make3D(VertexVel);
 
-	}
+
+
 }
 
 void Domain::fillM()
+{
+	typedef Eigen::Triplet<double> T;
+	std::vector<T> triplets;
+	I.M.resize(3 * V.rows(), 3 * V.rows());//(3*I.Vi.rows(), 3*I.Vi.rows()); // M is techincally |Vb| by |Vb| where Vb is the number of vertices on boundary
+	I.M.setZero();
+	float length;
+	int v1i, v2i;
+	float sixth = 1.0f / 6.0f;
+	Eigen::Vector3d normal;
+	float nx, ny, nz, nx2, nz2, ny2, nxny, nxnz, nynz;
+	for (int i = 0; i < I.E.rows(); i++)
+	{
+		v1i = (I.E(i, 0)); //global
+		v2i = (I.E(i, 1));
+		normal = NormalsE.row(I.Ei(i));
+		nx = normal(0); ny = normal(1); nz = normal(2);
+		nx2 = nx * nx; ny2 = ny * ny; nz2 = nz * nz; nxny = nx * ny; nxnz = nx * nz; nynz = ny * nz;
+		length = edgeLength(v1i, v2i);
+
+		//Top Left Corner
+		triplets.push_back(T(3 * v1i + 0, 3 * v1i + 0, 2.0 * nx2 * length * sixth));
+		triplets.push_back(T(3 * v1i + 0, 3 * v1i + 1, 2.0 * nxny * length * sixth));
+		triplets.push_back(T(3 * v1i + 0, 3 * v1i + 2, 2.0 * nxnz * length * sixth));
+
+		triplets.push_back(T(3 * v1i + 1, 3 * v1i + 0, 2.0 * nxny * length * sixth));
+		triplets.push_back(T(3 * v1i + 1, 3 * v1i + 1, 2.0 * ny2 * length * sixth));
+		triplets.push_back(T(3 * v1i + 1, 3 * v1i + 2, 2.0 * nynz * length * sixth));
+
+		triplets.push_back(T(3 * v1i + 2, 3 * v1i + 0, 2.0 * nxnz * length * sixth));
+		triplets.push_back(T(3 * v1i + 2, 3 * v1i + 1, 2.0 * nynz * length * sixth));
+		triplets.push_back(T(3 * v1i + 2, 3 * v1i + 2, 2.0 * nz2 * length * sixth));
+
+	
+		//shouldnt matter cus 3D but let's do it
+
+		//Top Right Corner
+		triplets.push_back(T(3 * v1i + 0, 3 * v2i + 0, nx2 * length * sixth ));
+		triplets.push_back(T(3 * v1i + 0, 3 * v2i + 1, nxny * length * sixth));
+		triplets.push_back(T(3 * v1i + 0, 3 * v2i + 2, nxnz * length * sixth));
+
+		triplets.push_back(T(3 * v1i + 1, 3 * v2i + 0, nxny * length * sixth));
+		triplets.push_back(T(3 * v1i + 1, 3 * v2i + 1, ny2 * length * sixth ));
+		triplets.push_back(T(3 * v1i + 1, 3 * v2i + 2, nynz * length * sixth));
+
+		triplets.push_back(T(3 * v1i + 2, 3 * v2i + 0, nxnz * length * sixth));
+		triplets.push_back(T(3 * v1i + 2, 3 * v2i + 1, nynz * length * sixth));
+		triplets.push_back(T(3 * v1i + 2, 3 * v2i + 2, nz2 * length * sixth ));
+
+		//Bottom Left Corner
+		triplets.push_back(T(3 * v2i + 0, 3 * v1i + 0, nx2 * length * sixth));
+		triplets.push_back(T(3 * v2i + 0, 3 * v1i + 1, nxny * length * sixth));
+		triplets.push_back(T(3 * v2i + 0, 3 * v1i + 2, nxnz * length * sixth));
+
+		triplets.push_back(T(3 * v2i + 1, 3 * v1i + 0, nxny * length * sixth));
+		triplets.push_back(T(3 * v2i + 1, 3 * v1i + 1, ny2 * length * sixth));
+		triplets.push_back(T(3 * v2i + 1, 3 * v1i + 2, nynz * length * sixth));
+
+		triplets.push_back(T(3 * v2i + 2, 3 * v1i + 0, nxnz * length * sixth));
+		triplets.push_back(T(3 * v2i + 2, 3 * v1i + 1, nynz * length * sixth));
+		triplets.push_back(T(3 * v2i + 2, 3 * v1i + 2, nz2 * length * sixth));
+
+
+		//Bottom Right Corner
+		triplets.push_back(T(3 * v2i + 0, 3 * v2i + 0, 2.0 * nx2 * length * sixth));
+		triplets.push_back(T(3 * v2i + 0, 3 * v2i + 1, 2.0 * nxny * length * sixth));
+		triplets.push_back(T(3 * v2i + 0, 3 * v2i + 2, 2.0 * nxnz * length * sixth));
+							
+		triplets.push_back(T(3 * v2i + 1, 3 * v2i + 0, 2.0 * nxny * length * sixth));
+		triplets.push_back(T(3 * v2i + 1, 3 * v2i + 1, 2.0 * ny2 * length * sixth));
+		triplets.push_back(T(3 * v2i + 1, 3 * v2i + 2, 2.0 * nynz * length * sixth));
+							
+		triplets.push_back(T(3 * v2i + 2, 3 * v2i + 0, 2.0 * nxnz * length * sixth));
+		triplets.push_back(T(3 * v2i + 2, 3 * v2i + 1, 2.0 * nynz * length * sixth));
+		triplets.push_back(T(3 * v2i + 2, 3 * v2i + 2, 2.0 * nz2 * length * sixth));
+
+	}
+	I.M.setFromTriplets(triplets.begin(), triplets.end());
+
+
+}
+
+void Domain::fillA()
+{
+	typedef Eigen::Triplet<double> T;
+	std::vector<T> triplets;
+	I.A.resize(3 * V.rows(),  EV.rows()); //(3 * I.Vi.rows(), 3 * I.Ei.rows());
+	I.A.setZero();
+	float length;
+	int v1i, v2i;
+	Eigen::Vector3d normal;
+	float nx, ny, nz;
+	for (int i = 0; i < I.E.rows(); i++)
+	{
+		v1i = I.E(i, 0);
+		v2i = I.E(i, 1);
+		length = edgeLength(v1i, v2i);
+
+		normal = NormalsE.row(I.Ei(i));
+		nx = normal(0); ny = normal(1); nz = normal(2);
+
+		triplets.push_back(T(3 * v1i + 0, I.Ei(i), length * nx * 0.5f));
+		triplets.push_back(T(3 * v1i + 1, I.Ei(i), length * ny * 0.5f));
+		triplets.push_back(T(3 * v1i + 2, I.Ei(i), length * nz * 0.5f));
+
+		triplets.push_back(T(3 * v2i + 0, I.Ei(i), length * nx * 0.5f));
+		triplets.push_back(T(3 * v2i + 1, I.Ei(i), length * ny * 0.5f));
+		triplets.push_back(T(3 * v2i + 2, I.Ei(i), length * nz * 0.5f));
+
+		/*
+		I.A.coeffRef(3 * v1i + 0,  I.Ei(i)) += length * nx * 0.5f;
+		I.A.coeffRef(3 * v1i + 1,  I.Ei(i)) += length * ny * 0.5f;
+		I.A.coeffRef(3 * v1i + 2,  I.Ei(i)) += length * nz * 0.5f;
+
+		I.A.coeffRef(3 * v2i + 0,  I.Ei(i)) += length * nx * 0.5f;
+		I.A.coeffRef(3 * v2i + 1,  I.Ei(i)) += length * ny * 0.5f;
+		I.A.coeffRef(3 * v2i + 2, I.Ei(i)) += length * nz * 0.5f;
+		*/
+	}
+	I.A.setFromTriplets(triplets.begin(), triplets.end());
+	Eigen::MatrixXd AD(I.A);
+}
+
+void Domain::fillMVLSE()
 {
 
 	I.M.resize(3*V.rows(), 3*V.rows());//(3*I.Vi.rows(), 3*I.Vi.rows()); // M is techincally |Vb| by |Vb| where Vb is the number of vertices on boundary
@@ -180,7 +259,7 @@ void Domain::fillM()
 
 }
 
-void Domain::fillA()
+void Domain::fillAVLSE()
 {
 
 	I.A.resize(3 * V.rows(), 3 * EV.rows()); //(3 * I.Vi.rows(), 3 * I.Ei.rows());
@@ -260,6 +339,8 @@ void Domain::calculateQuantities(float latentHeat)
 	calculateInterfaceVp(latentHeat);
 
 	interface2GlobalValues(); //move everything to the global domain
+
+	solveForVertexVelSmart();
 }
 
 
@@ -417,4 +498,21 @@ void Domain::calculateInterpolationAlongEdges()
 		}
 
 	}
+
 }
+
+Eigen::VectorXd Domain::projectVecs2Normals(Eigen::MatrixXd& vecs, Eigen::MatrixXd& normals)
+{
+	Eigen::Vector3d vec;
+	Eigen::Vector3d normal;
+	Eigen::VectorXd projections(vecs.rows());
+	for (int i = 0; i < vecs.rows(); i++)
+	{
+		vec = vecs.row(i);
+		normal = normals.row(i);
+		projections(i) = normal.transpose()*vec;
+	}
+
+	return projections;
+}
+

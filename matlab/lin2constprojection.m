@@ -3,7 +3,7 @@ numNodes = 3;
 numEdges = 3;
 visual_scale = 0.2;
 V = [0 0; 1 0; 1 1]% ; 3 0; 4 0; 5 0; 6 0; 7 0; 8 0; 9 0; 10 0];
-E = [ 1 2;  2 3; 3 1]% %; 3 4; 4 5; 5 6; 6 7; 7 8; 8 9; 9 10; 10 11;];
+E = [ 1 2;  2 3] ;% 3 4; 4 5; 5 6; 6 7; 7 8; 8 9; 9 10; 10 11;];
 
 
 [rows cols] = size(E);
@@ -30,7 +30,8 @@ for index=1:rows
 end
 
 edgesVp = normals;
-edgesVp = -edgesVp;% + 3*(rand(rows, 2) - 1)/2
+%edgesVp(:, 2) = edgesVp(:, 2) + 3*(rand(rows, 1))/2
+edgesVpn = projectToNormal(edgesVp, normals)
 edgesVp = transpose(reshape(edgesVp.', 1, []))
 
 
@@ -39,8 +40,8 @@ drawMesh(V, E);
 
 drawVertices(V);
 
-M = fillM(V, E)
-A = fillA(V, E)
+M = fillMVLSE(V, E)%, normals)
+A = fillAVLSE(V, E)%, normals)
 
 edgesV = pcg(M, A*edgesVp)
 edgesV = vec2mat(edgesV, 2)
@@ -55,7 +56,7 @@ drawLines(interpP, interpP + interpV*visual_scale, 'green')
 drawLines(midP, midP + edgesVp*visual_scale, 'red')
 drawLines(V, V + edgesV*visual_scale, 'blue')
 %%%%%%%%%%%%%%%% Functions to Set up Least Squares %%%%%%%%%%%%%%%%
-function M=fillM(V, E)
+function M=fillMVLSE(V, E)
     i = [];
     j = [];
     v = [];
@@ -112,7 +113,7 @@ function M=fillM(V, E)
     M = sparse(i, j, v);
 end
 
-function A=fillA(V, E)
+function A=fillAVLSE(V, E)
     i = [];
     j = [];
     v = [];
@@ -147,7 +148,161 @@ function A=fillA(V, E)
     A = sparse(i, j, v);
 end
 
+function M=fillMNLSE(V, E, Normals)
+    i = [];
+    j = [];
+    v = [];
+    counter = 1;
+    %fill M
+   [rows cols] = size(E)
+    for edgeIndex=1:(rows)
+        n = Normals(edgeIndex, :);
+        nx = n(1);
+        ny = n(2);
+        nx2 = nx*nx;
+        ny2 = ny*ny;
+        nxny = nx*ny;
+        v1i = E(edgeIndex, 1);
+        v2i = E(edgeIndex, 2);
+        eLength = edgeLength(V, E, edgeIndex)
+        
+        %Top Left 4x4 block
+        i(counter) = 2*v1i - 1;  
+        j(counter) = 2*v1i - 1;
+        v(counter) = 2*eLength*nx2/6;
+        counter = counter + 1;
+        
+        i(counter) = 2*v1i - 1;
+        j(counter) = 2*v1i;
+        v(counter) = 2*eLength*nxny/6;
+        counter = counter + 1;
+        
+        i(counter) = 2*v1i;
+        j(counter) = 2*v1i - 1;
+        v(counter) = 2*eLength*nxny/6;
+        counter = counter + 1;
+        
+        i(counter) = 2*v1i;
+        j(counter) = 2*v1i;
+        v(counter) = 2*ny2*eLength/6;
+        counter = counter + 1;
+        
+        %Top right corner        
+        i(counter) = 2*v1i - 1;
+        j(counter) = 2*v2i - 1;
+        v(counter) = eLength*nx2/6;
+        counter = counter + 1;
+        
+        i(counter) = 2*v1i - 1;
+        j(counter) = 2*v2i;
+        v(counter) = eLength*nxny/6;
+        counter = counter + 1;
+        
+        i(counter) = 2*v1i;
+        j(counter) = 2*v2i - 1;
+        v(counter) = eLength*nxny/6;
+        counter = counter + 1;
+        
+        i(counter) = 2*v1i;
+        j(counter) = 2*v2i;
+        v(counter) = eLength*ny2/6;
+        counter = counter + 1;
+        
+        %Bottom left Corner
+        i(counter) = 2*v2i - 1;
+        j(counter) = 2*v1i - 1;
+        v(counter) = eLength*nx2/6;
+        counter = counter + 1;
+        
+        i(counter) = 2*v2i - 1;
+        j(counter) = 2*v1i;
+        v(counter) = eLength*nxny/6;
+        counter = counter + 1;
+        
+        i(counter) = 2*v2i;
+        j(counter) = 2*v1i - 1;
+        v(counter) = eLength*nxny/6;
+        counter = counter + 1;
+        
+        i(counter) = 2*v2i;
+        j(counter) = 2*v1i;
+        v(counter) = eLength*ny2/6;
+        counter = counter + 1;
+        
+        %Bottom Right Corner
+        i(counter) = 2*v2i - 1;  
+        j(counter) = 2*v2i - 1;
+        v(counter) = 2*eLength*nx2/6;
+        counter = counter + 1;
+        
+        i(counter) = 2*v2i - 1;
+        j(counter) = 2*v2i;
+        v(counter) = 2*eLength*nxny/6;
+        counter = counter + 1;
+        
+        i(counter) = 2*v2i;
+        j(counter) = 2*v2i - 1;
+        v(counter) = 2*eLength*nxny/6;
+        counter = counter + 1;
+        
+        i(counter) = 2*v2i;
+        j(counter) = 2*v2i;
+        v(counter) = 2*eLength*ny2/6;
+        counter = counter + 1;
+        
+    end
+    M = sparse(i, j, v);
+end
+
+function A=fillANLSE(V, E, Normals)
+    i = [];
+    j = [];
+    v = [];
+    %fill A;
+    counter = 1;
+    [rows cols] = size(E)
+    for edgeIndex=1:(rows)
+        n = Normals(edgeIndex, :);
+        nx = n(1);
+        ny = n(2);
+        v1i = E(edgeIndex, 1);
+        v2i = E(edgeIndex, 2);
+        eLength = edgeLength(V, E, edgeIndex)
+        
+        i(counter) = 2* v1i - 1;
+        j(counter) = edgeIndex;
+        v(counter) = eLength*nx/2;
+        counter = counter + 1;
+        
+        i(counter) = 2*v1i;
+        j(counter) = edgeIndex;
+        v(counter) = eLength*ny/2;
+        counter = counter + 1;
+
+        i(counter) = 2*v2i - 1;
+        j(counter) = edgeIndex ;
+        v(counter) = eLength*nx/2;
+        counter = counter + 1;
+        
+        i(counter) = 2*v2i;
+        j(counter) =  edgeIndex;
+        v(counter) = eLength*ny/2;
+        counter = counter + 1;
+    end
+    A = sparse(i, j, v);
+end
+
 %%%%%%%%%%%%%%%%%%%%%%%%% Helper Functions %%%%%%%%%%%%%%%%%%%%%
+
+%Gvien a list of vectors, and a list of normals of the same size, return a
+%list of the vector projected on the normal
+function out=projectToNormal(vectors, normals)
+out = []
+[rows cols] = size(vectors)
+    for index=1:rows
+        out(index, 1) = dot(vectors(index, :), normals(index, :)) ;
+    end
+end
 function r=interpolateVector(vec, numSamples, V, E)
     [rows, cols] = size(vec)
     r = zeros(rows*(numSamples-1), cols);
@@ -185,8 +340,8 @@ end
 function drawMesh(V, E)
     [rows cols] = size(E)
     for index=1:(rows)
-        v1i = E(index, 1)
-        v2i = E(index, 2)
+        v1i = E(index, 1);
+        v2i = E(index, 2);
 
         v1 = [V(v1i, 1) V(v1i, 2)];
         v2 = [V(v2i, 1) V(v2i, 2)];

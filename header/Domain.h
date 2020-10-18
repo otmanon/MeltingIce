@@ -162,9 +162,19 @@ struct Domain
 	void solveForVertexVelOkay();
 
 	/*
-	Fills mass matrix
+	Fills M matrix using the better normal projection LSE
 	*/
 	void fillM();
+
+	/*
+	Fills A matrix using the better normal projection LSE
+	*/
+	void fillA();
+
+	/*
+	Fills mass matrix using the "wrong" vector LSE
+	*/
+	void fillMVLSE();
 
 	/*
 	Fills L matrix
@@ -172,9 +182,9 @@ struct Domain
 	void fillL();
 
 	/*
-	fills A Matrix
+	fills A Matrix using the "wrong" vector LSE
 	*/
-	void fillA();
+	void fillAVLSE();
 
 	/*
 	Takes values calculated on interface such as Vp, normals and midpoitns, and puts them in the global array
@@ -188,4 +198,9 @@ struct Domain
 	this could be displayed for debugging purposes.
 	*/
 	void calculateInterpolationAlongEdges();
+
+	/*
+	Projects list of vectors to a corresponding list of normals
+	*/
+	Eigen::VectorXd projectVecs2Normals(Eigen::MatrixXd& vectors, Eigen::MatrixXd& normals);
 };
