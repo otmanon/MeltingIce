@@ -63,7 +63,7 @@ void Domain::diffuseHeat(float dt)
 void Domain::melt(float dt)
 {
 
-	V += VertexVel * 0.3;// dt;
+	V += VertexVel *  dt;
 
 
 }
@@ -85,9 +85,11 @@ void Domain::solveForVertexVelSmart()
 	solver.compute(I.M);
 	v = solver.solve(b);
 	*/
-
-	Eigen::BiCGSTAB<Eigen::SparseMatrix<double>> solver;
-	solver.compute(I.M.transpose());
+	Eigen::SparseMatrix<double> eye;
+	eye.resize(I.M.rows(), I.M.cols());
+	eye.setIdentity();
+	Eigen::ConjugateGradient<Eigen::SparseMatrix<double>> solver;
+	solver.compute(I.M + lambda * eye);
 	v = solver.solve(b);
 
 
@@ -106,16 +108,16 @@ void Domain::fillM()
 	std::vector<T> triplets;
 	I.M.resize(3 * V.rows(), 3 * V.rows());//(3*I.Vi.rows(), 3*I.Vi.rows()); // M is techincally |Vb| by |Vb| where Vb is the number of vertices on boundary
 	I.M.setZero();
-	float length;
+	double length;
 	int v1i, v2i;
-	float sixth = 1.0f / 6.0f;
+	double sixth = 1.0 / 6.0;
 	Eigen::Vector3d normal;
-	float nx, ny, nz, nx2, nz2, ny2, nxny, nxnz, nynz;
+	double nx, ny, nz, nx2, nz2, ny2, nxny, nxnz, nynz;
 	for (int i = 0; i < I.E.rows(); i++)
 	{
 		v1i = (I.E(i, 0)); //global
 		v2i = (I.E(i, 1));
-		normal = NormalsE.row(I.Ei(i));
+		normal = I.NormalsE.row(i);
 		nx = normal(0); ny = normal(1); nz = normal(2);
 		nx2 = nx * nx; ny2 = ny * ny; nz2 = nz * nz; nxny = nx * ny; nxnz = nx * nz; nynz = ny * nz;
 		length = edgeLength(v1i, v2i);
@@ -133,8 +135,6 @@ void Domain::fillM()
 		triplets.push_back(T(3 * v1i + 2, 3 * v1i + 1, 2.0 * nynz * length * sixth));
 		triplets.push_back(T(3 * v1i + 2, 3 * v1i + 2, 2.0 * nz2 * length * sixth));
 
-	
-		//shouldnt matter cus 3D but let's do it
 
 		//Top Right Corner
 		triplets.push_back(T(3 * v1i + 0, 3 * v2i + 0, nx2 * length * sixth ));
@@ -188,39 +188,29 @@ void Domain::fillA()
 	std::vector<T> triplets;
 	I.A.resize(3 * V.rows(),  EV.rows()); //(3 * I.Vi.rows(), 3 * I.Ei.rows());
 	I.A.setZero();
-	float length;
+	double length;
 	int v1i, v2i;
 	Eigen::Vector3d normal;
-	float nx, ny, nz;
+	double nx, ny, nz;
 	for (int i = 0; i < I.E.rows(); i++)
 	{
 		v1i = I.E(i, 0);
 		v2i = I.E(i, 1);
 		length = edgeLength(v1i, v2i);
 
-		normal = NormalsE.row(I.Ei(i));
+		normal = I.NormalsE.row(i);
 		nx = normal(0); ny = normal(1); nz = normal(2);
 
-		triplets.push_back(T(3 * v1i + 0, I.Ei(i), length * nx * 0.5f));
-		triplets.push_back(T(3 * v1i + 1, I.Ei(i), length * ny * 0.5f));
-		triplets.push_back(T(3 * v1i + 2, I.Ei(i), length * nz * 0.5f));
+		triplets.push_back(T(3 * v1i + 0, I.Ei(i), length * nx * 0.5));
+		triplets.push_back(T(3 * v1i + 1, I.Ei(i), length * ny * 0.5));
+		triplets.push_back(T(3 * v1i + 2, I.Ei(i), length * nz * 0.5));
 
-		triplets.push_back(T(3 * v2i + 0, I.Ei(i), length * nx * 0.5f));
-		triplets.push_back(T(3 * v2i + 1, I.Ei(i), length * ny * 0.5f));
-		triplets.push_back(T(3 * v2i + 2, I.Ei(i), length * nz * 0.5f));
-
-		/*
-		I.A.coeffRef(3 * v1i + 0,  I.Ei(i)) += length * nx * 0.5f;
-		I.A.coeffRef(3 * v1i + 1,  I.Ei(i)) += length * ny * 0.5f;
-		I.A.coeffRef(3 * v1i + 2,  I.Ei(i)) += length * nz * 0.5f;
-
-		I.A.coeffRef(3 * v2i + 0,  I.Ei(i)) += length * nx * 0.5f;
-		I.A.coeffRef(3 * v2i + 1,  I.Ei(i)) += length * ny * 0.5f;
-		I.A.coeffRef(3 * v2i + 2, I.Ei(i)) += length * nz * 0.5f;
-		*/
+		triplets.push_back(T(3 * v2i + 0, I.Ei(i), length * nx * 0.5));
+		triplets.push_back(T(3 * v2i + 1, I.Ei(i), length * ny * 0.5));
+		triplets.push_back(T(3 * v2i + 2, I.Ei(i), length * nz * 0.5));
 	}
 	I.A.setFromTriplets(triplets.begin(), triplets.end());
-	Eigen::MatrixXd AD(I.A);
+	
 }
 
 void Domain::fillMVLSE()
@@ -273,13 +263,13 @@ void Domain::fillAVLSE()
 		length = edgeLength(v1i, v2i);
 	//	v1i = I.globalToLocalV(v1i); //local
 	//	v2i = I.globalToLocalV(v2i);
-		I.A.coeffRef(3 * v1i + 0, 3 * I.Ei(i) + 0) += length * 0.5f;
-		I.A.coeffRef(3 * v1i + 1, 3 * I.Ei(i) + 1) += length * 0.5f;
-		I.A.coeffRef(3 * v1i + 1, 3 * I.Ei(i) + 2) += length * 0.5f;
+		I.A.coeffRef(3 * v1i + 0, 3 * I.Ei(i) + 0) += length * 0.5;
+		I.A.coeffRef(3 * v1i + 1, 3 * I.Ei(i) + 1) += length * 0.5;
+		I.A.coeffRef(3 * v1i + 1, 3 * I.Ei(i) + 2) += length * 0.5;
 					 				   		
-		I.A.coeffRef(3 * v2i + 0, 3 * I.Ei(i) + 0) += length * 0.5f;
-		I.A.coeffRef(3 * v2i + 1, 3 * I.Ei(i) + 1) += length * 0.5f;
-		I.A.coeffRef(3 * v1i + 2, 3 * I.Ei(i) + 2) += length * 0.5f;
+		I.A.coeffRef(3 * v2i + 0, 3 * I.Ei(i) + 0) += length * 0.5;
+		I.A.coeffRef(3 * v2i + 1, 3 * I.Ei(i) + 1) += length * 0.5;
+		I.A.coeffRef(3 * v1i + 2, 3 * I.Ei(i) + 2) += length * 0.5;
 	}
 
 	Eigen::MatrixXd AD(I.A);
@@ -464,7 +454,7 @@ Eigen::MatrixXd expandVec2Mat(Eigen::VectorXd vec, int cols)
 
 void Domain::calculateInterpolationAlongEdges()
 {
-	int numSamples = 10; //number of poitns to sample throughout edge (not including endpoints)
+	int numSamples = 15; //number of poitns to sample throughout edge (not including endpoints)
 	int v1i, v2i;
 	Eigen::Vector3d v1, v2; //Two vertices with which we will interpolate
 	Eigen::Vector3d vel1, vel2, velInt, xInt, edge;
@@ -494,7 +484,7 @@ void Domain::calculateInterpolationAlongEdges()
 			I.intV.row(counter) = velInt;
 			I.intX.row(counter) = xInt;
 			counter++;
-			s += 1.0 / (numSamples + 2);
+			s += 1.0 / (numSamples + 2.0);
 		}
 
 	}

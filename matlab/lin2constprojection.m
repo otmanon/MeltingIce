@@ -2,10 +2,12 @@ clc;
 numNodes = 3;
 numEdges = 3;
 visual_scale = 0.2;
-V = [0 0; 1 0; 1 1]% ; 3 0; 4 0; 5 0; 6 0; 7 0; 8 0; 9 0; 10 0];
-E = [ 1 2;  2 3] ;% 3 4; 4 5; 5 6; 6 7; 7 8; 8 9; 9 10; 10 11;];
+%V = [0 0; 1 0; 2 0; 3 0; 4 0; 5 0; 6 0; 7 0; 8 0; 9 0; 10 0];
+%E = [ 1 2;  2 3;  3 4; 4 5; 5 6; 6 7; 7 8; 8 9; 9 10; 10 11];
 
-
+V = [0 0; 0.5 0.05; 1 0; 1 0.5; 1 1; 0.5 1; 0 1; 0 0.5];% ; 3 0; 4 0; 5 0; 6 0; 7 0; 8 0; 9 0; 10 0];
+E = [ 1 2;  2 3; 3 4; 4 5; 5 6; 6 7; 7 8; 8 1] ;% 3 4; 4 5; 5 6; 6 7; 7 8; 8 9; 9 10; 10 11;];
+V = 0.05*V
 [rows cols] = size(E);
 midP = zeros(rows, 2);
 normals = zeros(rows, 2);
@@ -40,10 +42,13 @@ drawMesh(V, E);
 
 drawVertices(V);
 
-M = fillMVLSE(V, E)%, normals)
-A = fillAVLSE(V, E)%, normals)
+%M = fillMVLSE(V, E)%, normals)
+%A = fillAVLSE(V, E)%, normals)
 
-edgesV = pcg(M, A*edgesVp)
+M = fillMNLSE(V, E, normals)
+A = fillANLSE(V, E, normals)
+
+edgesV = pcg(M, A*edgesVpn)
 edgesV = vec2mat(edgesV, 2)
 edgesVp = vec2mat(edgesVp, 2)
 

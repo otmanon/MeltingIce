@@ -27,14 +27,14 @@ void  MeltingHook2D::initSimulation()
 	//if (modelFilepath.substr(modelFilepath.length() - 3) == ".obj")
 	//	igl::readOBJ(modelFilepath, origV, origF);
 //	else if (modelFilepath.substr(modelFilepath.length() - 3) == ".off")
+//	std::string modelFilepath = "data/2dModels/elephant.off";
 	std::string modelFilepath = "data/2dModels/plane.obj";
 	Eigen::MatrixXd V;
 	Eigen::MatrixXi F, E;
 	//igl::readOFF(modelFilepath, V, F);
 	igl::readOBJ(modelFilepath, V, F);
-	V *= 0.2f;
+	V *= 1.0;
 	igl::boundary_facets(F, E); //Fills E with boundary edges... including nonmanifold ones which is what we have in 2D.
-
 
 	initMesh.V *= 1;
 	triangulateDomain(V, F, E);
@@ -246,7 +246,7 @@ void  MeltingHook2D::triangulateDomain(Eigen::MatrixXd V, Eigen::MatrixXi F, Eig
 	Eigen::MatrixXi F2;
 	//	convert3DVerticesTo2D(V, V2D);
 	Eigen::MatrixXd H;
-	igl::triangle::triangulate(V, E, H, "a0.005q", V2, F2);
+	igl::triangle::triangulate(V, E, H, "a1.0q", V2, F2);
 	convert2DVerticesTo3D(V2, V);
 	D.V = V;
 	D.F = F2;
@@ -282,7 +282,7 @@ void  MeltingHook2D::retriangulateDomain()
 	Eigen::MatrixXi F2;
 	convert3DVerticesTo2D(D.V, V2D);
 	Eigen::MatrixXd H;
-	igl::triangle::triangulate(V2D, boundaryEdges, H, "a0.005q", V2, F2);
+	igl::triangle::triangulate(V2D, boundaryEdges, H, "a1.0qYY", V2, F2);
 	convert2DVerticesTo3D(V2, D.V);
 	D.F = F2;
 	//	D.VGrad = Eigen::MatrixXd::Zero(D.V.rows(), D.V.cols());
@@ -308,7 +308,7 @@ void MeltingHook2D::drawGUI(igl::opengl::glfw::imgui::ImGuiMenu &menu)
 		ImGui::Checkbox("render Vp", &renderVp);
 		ImGui::Checkbox("render VertexVel", &renderVertexVel);
 		ImGui::Checkbox("Render Interpolated", &renderInterpolatedVel);
-		ImGui::SliderFloat("vis scale", &vis_scale, 1e-2, 1e1, "%.8f", 10.0f);
+		ImGui::SliderFloat("vis scale", &vis_scale, 1e-2, 1e2, "%.8f", 10.0f);
 	}
 
 	if (ImGui::CollapsingHeader("Sim. Parameters"))
@@ -317,6 +317,7 @@ void MeltingHook2D::drawGUI(igl::opengl::glfw::imgui::ImGuiMenu &menu)
 		ImGui::Checkbox("do melting", &melting_flag);
 		ImGui::Checkbox("re-triangulate", &retriangulate);
 		ImGui::SliderFloat("dt", &dt, 1e-6, 1e1, "%.5f", 10.0f);
+		ImGui::SliderFloat("lambda", &D.lambda, 0, 1e2, "%.2f", 10.0f);
 		ImGui::SliderFloat("phi", &phi, 0, 100);
 
 	}
@@ -363,7 +364,7 @@ bool  MeltingHook2D::simulateOneStep()
 		{
 			if (explicitMelting)
 			{
-				explicitStep(dt, 1000);
+				explicitStep(dt, 1000.0);
 				stepping_flag = false;
 
 			}
@@ -373,7 +374,7 @@ bool  MeltingHook2D::simulateOneStep()
 	{
 		if (explicitMelting)
 		{
-			explicitStep(dt, 1000);
+			explicitStep(dt, 1000.0);
 		}
 		else if (implicitMelting)
 		{
@@ -381,8 +382,6 @@ bool  MeltingHook2D::simulateOneStep()
 		}
 
 
-		//calculateGradientInfo();
-		//meltSurface();
 	}
 
 	return false;
@@ -393,7 +392,7 @@ void MeltingHook2D::explicitStep(float dt, float latentHeat)
 	if (diffusion_flag)
 	{
 		D.diffuseHeat(dt);
-		D.calculateQuantities(1000);
+		D.calculateQuantities(1000.0);
 		if (renderInterpolatedVel)
 			D.calculateInterpolationAlongEdges();
 		

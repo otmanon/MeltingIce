@@ -91,6 +91,9 @@ struct Domain
 	SubDomain S;
 	SubDomain L;
 
+
+	float lambda = 0.1;
+
 	float maxX, maxY, minX, minY;
 
 	/*
