@@ -61,7 +61,25 @@ public:
 	*/
 	void segmentDomain(Eigen::MatrixXd V, Eigen::MatrixXi E, bool init);
 
-		
+	/*
+	Calculates winding number of each face barycenter.
+	Input:
+		V - vertices of geometry
+		F - faces of geomtry
+		interfaceEdges - the interface with respect to which we are calculating winding numbers
+	Output:
+		W - Winding number of each barycenter
+	*/
+	void barycenterWindingNumber(Eigen::VectorXd& W, Eigen::MatrixXd& V, Eigen::MatrixXi& F, Eigen::MatrixXi& interfaceEdges);
+	
+	/*
+	Returns list of faces taht are inside and outside the interface in question
+	W: winding number of each face barycenter
+	solidF -List of vertex index triplets representing solid faces
+	liquidF -List of vertex index triplets representing liquid faces
+	*/
+	void insideOutsideFaces(Eigen::MatrixXi& solidF, Eigen::MatrixXi& liquidF, Eigen::VectorXd& W);
+
 	/*
 	Given solid mesh, extracts its boundary, wraps a bounding box around it, triangulates 
 	entire domain in one sweep, while maintaining elephant boundary edges
@@ -74,8 +92,18 @@ public:
 	*/
 	void updateDomain();
 
+	/*
+	For all interface Edges, finds the two corresponding Face indices in the globalF that surrounds each edge
+	Useful for calculating interface normals
+	*/
+	void MeltingHook2D::interfaceEdgesToFaceAdjacency(Eigen::MatrixXi& solidF, Eigen::VectorXd & W);
 
 	void retriangulateDomain();
+
+	/*
+	For each vertex index in the interface, give it a new local index. Used so that our sparse solve isn't so large
+	*/
+	void MeltingHook2D::interfaceGlobalToLocalVertexMappings();
 
 	/*
 	ImGui render... not sure how this works

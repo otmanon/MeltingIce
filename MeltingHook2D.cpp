@@ -44,25 +44,33 @@ void  MeltingHook2D::initSimulation()
 	D.VertexVel.setZero();
 }
 
-
-void  MeltingHook2D::segmentDomain(Eigen::MatrixXd V, Eigen::MatrixXi E, bool init)
+/*
+Calculates winding number of each face barycenter. 
+Input:
+	V - vertices of geometry
+	F - faces of geomtry
+	interfaceEdges - the interface with respect to which we are calculating winding numbers
+*/
+void MeltingHook2D::barycenterWindingNumber(Eigen::VectorXd& W, Eigen::MatrixXd& V, Eigen::MatrixXi& F, Eigen::MatrixXi& interfaceEdges)
 {
-	Eigen::VectorXd W; //Winding number of each face
+	W.resize(F.rows());
 	Eigen::MatrixXd BC;
 	// Compute barycenters of all tets
 	igl::barycenter(D.V, D.F, BC);
-	D.BC = BC;
-
-	igl::winding_number(V, E, BC, D.W); //winding number at baricenters
+	
+	igl::winding_number(V, interfaceEdges, BC, W); //winding number at baricenters
 
 	//normalize
-	D.W = (D.W.array() - D.W.minCoeff()) / (D.W.maxCoeff() - D.W.minCoeff());
-	W = D.W;
+	W = (W.array() - W.minCoeff()) / (W.maxCoeff() - W.minCoeff());
+	D.W = W;
+	D.BC = BC;
+}
 
-	//Count how many vertices are inside Solid and outside Solid
-	Eigen::MatrixXi solidF((W.array() > 0.9f).count(), 3); // faces inside solid
-	Eigen::MatrixXi liquidF((W.array() < 0.9f).count(), 3); // faces inside solid
-	Eigen::VectorXd T(D.V.rows());
+void MeltingHook2D::insideOutsideFaces(Eigen::MatrixXi& solidF, Eigen::MatrixXi& liquidF, Eigen::VectorXd& W)
+{
+	double threshold = 0.9;
+	solidF.resize((W.array() > threshold).count(), 3);
+	liquidF.resize((W.array() < threshold).count(), 3);
 	//update Solid domain and indices 
 	int indexS = 0;
 	int indexL = 0;
@@ -79,56 +87,33 @@ void  MeltingHook2D::segmentDomain(Eigen::MatrixXd V, Eigen::MatrixXi E, bool in
 			indexL++;
 		}
 	}
+}
 
+/*
+returns inVi, outVi, bVi, the indices of the vertices belong to the interior domain, exterior domain and interface domain respectively
+Input:
+solidF : Flist of index triplets of vertices belonging to interior domain
+E	   : Boundary edges, list of doublets containing vertices on the interface's domain.
+*/
+void insideOutisdeVertices(Eigen::VectorXi& inVi, Eigen::VectorXi& outVi, Eigen::VectorXi& bVi, Eigen::MatrixXi& solidF,int numVertices)
+{
+	Eigen::VectorXi allIndices, IA, IC, tmp;
 	Eigen::MatrixXi interfaceEdges;
-	Eigen::VectorXi interiorIndices, interiorIndices2, allIndices, exteriorIndices, interfaceIndices, IA, IC;
-	igl::unique(solidF, interiorIndices);											//interiorIndices contains index of interior vertices
-	igl::colon(0, D.V.rows() - 1, allIndices);										//allIndices contains all indeces
-	igl::setdiff(allIndices, interiorIndices, exteriorIndices, IA);					//exterior indices 
-	igl::boundary_facets(solidF, interfaceEdges, D.I.FiS, IC);						//get edges of solid
-	igl::unique(interfaceEdges, interfaceIndices);									//get interface indices
-	
-	//separate  boundary indices from interior indices.
-	igl::setdiff(interiorIndices, interfaceIndices, interiorIndices2, IA);
-	interiorIndices = interiorIndices2;
+	igl::unique(solidF, inVi);														//interiorIndices contains index of interior vertices and includes interface ones too right now
+	igl::colon(0, numVertices - 1, allIndices);										//allIndices contains all indeces
+	igl::setdiff(allIndices, inVi, outVi, IA);							//exterior indices 
+															
+	igl::boundary_facets(solidF, interfaceEdges);
+	igl::unique(interfaceEdges, bVi);														//get interface indices
+	igl::setdiff(inVi, bVi, tmp, IA);						//extracts itnerface indeces from interior vertices and puts them in tmp
+	inVi = tmp;
+}
 
-	//set up interior/exterior Temperatures
-	Eigen::VectorXd interiorT = Eigen::VectorXd::Constant(interiorIndices.rows(), 0.0f);
-	Eigen::VectorXd interfaceT = Eigen::VectorXd::Constant(interfaceIndices.rows(), 0.0f);
-	Eigen::VectorXd exteriorT = Eigen::VectorXd::Constant(exteriorIndices.rows(), 0.0f);
-
-	//Set bounding box indeces and temperatures
-	Eigen::VectorXd  boundaryT;
-	
-	igl::boundary_facets(D.F, D.Boundary.E);
-	igl::unique(D.Boundary.E, D.Boundary.Vi);
-	D.Boundary.T = Eigen::VectorXd::Constant(D.Boundary.Vi.rows(), 10);
-
-	//Updates main T with subdomain Ts
-	igl::slice_into(interiorT, interiorIndices, 1, T);
-	igl::slice_into(exteriorT, exteriorIndices, 1, T);
-	igl::slice_into(interfaceT, interfaceIndices, 1, T);
-	igl::slice_into(D.Boundary.T, D.Boundary.Vi, T);
-
-
-	//Fill out subdomain info
-	D.S.F = solidF;
-	if (init)
-	{
-		D.S.Vi = interiorIndices;
-		D.S.T = interiorT;
-	}
-
-	D.L.F = liquidF;
-	if (init)
-	{
-		D.L.Vi = exteriorIndices;
-		D.L.T = exteriorT;
-	}
-
-//	D.I.E = interfaceEdges; //needs to be synced with indices on domain but whatever for now
-	Eigen::MatrixXd FE, EF, EV;// face-edge and edge-face topology matrices
+void MeltingHook2D::interfaceEdgesToFaceAdjacency(Eigen::MatrixXi& solidF, Eigen::VectorXd & W)
+{
+	Eigen::MatrixXi interfaceEdges;
 	igl::edge_topology(D.V, D.F, D.EV, D.FE, D.EF); //mainly interested in EF
+	igl::boundary_facets(solidF, interfaceEdges);
 
 	//identify boundary edges
 	D.I.Ei.resize(interfaceEdges.rows());
@@ -141,11 +126,11 @@ void  MeltingHook2D::segmentDomain(Eigen::MatrixXd V, Eigen::MatrixXi E, bool in
 	{
 		f1 = D.EF(i, 0);
 		f2 = D.EF(i, 1);
-		if (f1 == -1 || f2 == -1)
+		if (f1 == -1.0 || f2 == -1.0)
 		{
 			continue;
 		}
-		if (D.W(f1) > 0.9f && D.W(f2) < 0.9f) //this point is inside domain
+		if (D.W(f1) > 0.9f && D.W(f2) < 0.9f) //this point is inside interface
 		{
 			D.I.Ei(eIndex) = i; //index of edge in question. (local to global mapping)
 			D.I.FiS(eIndex) = f1; //solid f index
@@ -165,10 +150,13 @@ void  MeltingHook2D::segmentDomain(Eigen::MatrixXd V, Eigen::MatrixXi E, bool in
 	Eigen::MatrixXi rows;
 	igl::slice(D.EV, D.I.Ei, cols, D.I.E);
 	D.I.LoopE = interfaceEdges;
+}
 
+void MeltingHook2D::interfaceGlobalToLocalVertexMappings()
+{
 	//Create globalToLocal mappings between interface vertices and global vertices
 	int max = D.I.E.maxCoeff();
-	D.I.globalToLocalV.resize(max+1); D.I.globalToLocalV.setConstant(-1);
+	D.I.globalToLocalV.resize(max + 1); D.I.globalToLocalV.setConstant(-1);
 	D.I.localToGlobalV.resize(D.I.E.rows()); D.I.localToGlobalV.setConstant(-1);
 	for (int i = 0; i < D.I.LoopE.rows(); i++)
 	{
@@ -178,20 +166,71 @@ void  MeltingHook2D::segmentDomain(Eigen::MatrixXd V, Eigen::MatrixXi E, bool in
 			D.I.localToGlobalV(i) = D.I.LoopE(i, 0);
 		}
 	}
-	
-	//Create globalToLocal mappings between interface vertices and global vertices
 
+}
+
+void  MeltingHook2D::segmentDomain(Eigen::MatrixXd V, Eigen::MatrixXi E, bool init)
+{
+	Eigen::VectorXd W; //Winding number of each face
+	barycenterWindingNumber(W, V, D.F, E);
+
+	Eigen::MatrixXi solidF, liquidF;
+	insideOutsideFaces(solidF, liquidF, W);
+	//Count how many vertices are inside Solid and outside Solid
+	
+	//What's this for? I don't remember.
+	Eigen::VectorXd T(D.V.rows());
+	
+	//label each vertex as being strictly interor, exterior or on the interface
+	Eigen::VectorXi interiorIndices, exteriorIndices, interfaceIndices;
+	insideOutisdeVertices(interiorIndices, exteriorIndices, interfaceIndices, solidF, D.V.rows());
+
+	//set up interior/exterior Temperatures
+	Eigen::VectorXd interiorT = Eigen::VectorXd::Constant(interiorIndices.rows(), 0.0f);
+	Eigen::VectorXd interfaceT = Eigen::VectorXd::Constant(interfaceIndices.rows(), 0.0f);
+	Eigen::VectorXd exteriorT = Eigen::VectorXd::Constant(exteriorIndices.rows(), 0.0f);
+
+	// maybe unneeded
+	//Set bounding box indeces and temperatures
+	Eigen::VectorXd  boundaryT;
+	
+	igl::boundary_facets(D.F, D.Boundary.E);
+	igl::unique(D.Boundary.E, D.Boundary.Vi);
+	D.Boundary.T = Eigen::VectorXd::Constant(D.Boundary.Vi.rows(), 10);
+
+	//Updates main T with subdomain Ts
+	igl::slice_into(interiorT, interiorIndices, 1, T);
+	igl::slice_into(exteriorT, exteriorIndices, 1, T);
+	igl::slice_into(interfaceT, interfaceIndices, 1, T);
+	igl::slice_into(D.Boundary.T, D.Boundary.Vi, T);
+	
+
+	//Fill out subdomain info
+	D.S.F = solidF;
+	D.L.F = liquidF;
 	if (init)
 	{
+		D.S.Vi = interiorIndices;
+		D.S.T = interiorT;
+
+		D.L.Vi = exteriorIndices;
+		D.L.T = exteriorT;
+
 		D.I.Vi = interfaceIndices;
 		
 		D.I.T = interfaceT;
 
 		D.T = T;
 		
-
-		
 	}
+
+	interfaceEdgesToFaceAdjacency( solidF, W );
+	
+	interfaceGlobalToLocalVertexMappings();
+
+
+	//Create globalToLocal mappings between interface vertices and global vertices
+
 }
 
 
@@ -282,7 +321,7 @@ void  MeltingHook2D::retriangulateDomain()
 	Eigen::MatrixXi F2;
 	convert3DVerticesTo2D(D.V, V2D);
 	Eigen::MatrixXd H;
-	igl::triangle::triangulate(V2D, boundaryEdges, H, "a1.0qYY", V2, F2);
+	igl::triangle::triangulate(V2D, boundaryEdges, H, "a0.25qYY", V2, F2);
 	convert2DVerticesTo3D(V2, D.V);
 	D.F = F2;
 	//	D.VGrad = Eigen::MatrixXd::Zero(D.V.rows(), D.V.cols());

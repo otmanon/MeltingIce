@@ -2,12 +2,12 @@ clc;
 numNodes = 3;
 numEdges = 3;
 visual_scale = 0.2;
-%V = [0 0; 1 0; 2 0; 3 0; 4 0; 5 0; 6 0; 7 0; 8 0; 9 0; 10 0];
-%E = [ 1 2;  2 3;  3 4; 4 5; 5 6; 6 7; 7 8; 8 9; 9 10; 10 11];
+V = [0 0; 1 0; 1 1]%; 3 0; 4 0; 5 0; 6 0; 7 0; 8 0; 9 0; 10 0];
+E = [ 1 2; 2 3]%;  3 4; 4 5; 5 6; 6 7; 7 8; 8 9; 9 10; 10 11];
 
-V = [0 0; 0.5 0.05; 1 0; 1 0.5; 1 1; 0.5 1; 0 1; 0 0.5];% ; 3 0; 4 0; 5 0; 6 0; 7 0; 8 0; 9 0; 10 0];
-E = [ 1 2;  2 3; 3 4; 4 5; 5 6; 6 7; 7 8; 8 1] ;% 3 4; 4 5; 5 6; 6 7; 7 8; 8 9; 9 10; 10 11;];
-V = 0.05*V
+%V = [0 0; 0.5 0.05; 1 0; 1 0.5; 1 1; 0.5 1; 0 1; 0 0.5];% ; 3 0; 4 0; 5 0; 6 0; 7 0; 8 0; 9 0; 10 0];
+%E = [ 1 2;  2 3; 3 4; 4 5; 5 6; 6 7; 7 8; 8 1] ;% 3 4; 4 5; 5 6; 6 7; 7 8; 8 9; 9 10; 10 11;];
+V = V
 [rows cols] = size(E);
 midP = zeros(rows, 2);
 normals = zeros(rows, 2);
@@ -32,9 +32,9 @@ for index=1:rows
 end
 
 edgesVp = normals;
-%edgesVp(:, 2) = edgesVp(:, 2) + 3*(rand(rows, 1))/2
-edgesVpn = projectToNormal(edgesVp, normals)
-edgesVp = transpose(reshape(edgesVp.', 1, []))
+%edgesVp(:, 2) = 3*edgesVp(:, 2) + 3*(rand(rows, 1) - 1)/2
+edgesVpn = projectToNormal(edgesVp, normals);
+edgesVp = transpose(reshape(edgesVp.', 1, []));
 
 
 
@@ -48,7 +48,10 @@ drawVertices(V);
 M = fillMNLSE(V, E, normals)
 A = fillANLSE(V, E, normals)
 
-edgesV = pcg(M, A*edgesVpn)
+lambda = 0.01;
+I = eye(6,6 );
+b = A*edgesVpn;
+edgesV = (M - lambda*I)\ b
 edgesV = vec2mat(edgesV, 2)
 edgesVp = vec2mat(edgesVp, 2)
 
@@ -272,7 +275,7 @@ function A=fillANLSE(V, E, Normals)
         ny = n(2);
         v1i = E(edgeIndex, 1);
         v2i = E(edgeIndex, 2);
-        eLength = edgeLength(V, E, edgeIndex)
+        eLength = edgeLength(V, E, edgeIndex);
         
         i(counter) = 2* v1i - 1;
         j(counter) = edgeIndex;
@@ -302,17 +305,17 @@ end
 %Gvien a list of vectors, and a list of normals of the same size, return a
 %list of the vector projected on the normal
 function out=projectToNormal(vectors, normals)
-out = []
-[rows cols] = size(vectors)
+out = [];
+[rows cols] = size(vectors);
     for index=1:rows
         out(index, 1) = dot(vectors(index, :), normals(index, :)) ;
     end
 end
 function r=interpolateVector(vec, numSamples, V, E)
-    [rows, cols] = size(vec)
+    [rows, cols] = size(vec);
     r = zeros(rows*(numSamples-1), cols);
     counter = 1;
-    [rows cols] = size(E)
+    [rows cols] = size(E);
     for edgeIndex=1:(rows)
         v1i = E(edgeIndex, 1);
         v2i = E(edgeIndex, 2);
@@ -322,10 +325,10 @@ function r=interpolateVector(vec, numSamples, V, E)
         eLength = edgeLength(V, E, edgeIndex);
         s = 0;
         for sampleNum = 1:numSamples-1
-            s = s + 1/numSamples
+            s = s + 1/numSamples;
             mid = s * v2 + (1 - s) * v1;
-            r(counter, :) = mid
-            counter = counter + 1
+            r(counter, :) = mid;
+            counter = counter + 1;
         end
         
     end
@@ -339,11 +342,11 @@ function e=edgeLength(V, E, index)
     v1 = V(v1i, :);
     v2 = V(v2i,:);
     
-    e = norm(v2 - v1)
+    e = norm(v2 - v1);
 end
 
 function drawMesh(V, E)
-    [rows cols] = size(E)
+    [rows cols] = size(E);
     for index=1:(rows)
         v1i = E(index, 1);
         v2i = E(index, 2);
@@ -367,7 +370,7 @@ function mat=vec2mat(vec, dim)
     end
 end
 function drawLines(V1, V2, color)
-    [rows cols] = size(V1)
+    [rows cols] = size(V1);
     for index=1:rows
         line([V1(index, 1) V2(index, 1)], [V1(index, 2) V2(index, 2)], 'Color',color, 'LineWidth',2)
     end
