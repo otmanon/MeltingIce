@@ -20,6 +20,8 @@
 #include <igl/triangle/triangulate.h>
 #include <igl/doublearea.h>
 #include <igl/colon.h>
+#include <igl/avg_edge_length.h>
+
 void  MeltingHook2D::initSimulation()
 {
 
@@ -33,7 +35,7 @@ void  MeltingHook2D::initSimulation()
 	Eigen::MatrixXi F, E;
 	//igl::readOFF(modelFilepath, V, F);
 	igl::readOBJ(modelFilepath, V, F);
-	V *= 1.0;
+	V *= 0.25;
 	igl::boundary_facets(F, E); //Fills E with boundary edges... including nonmanifold ones which is what we have in 2D.
 
 	initMesh.V *= 1;
@@ -42,6 +44,9 @@ void  MeltingHook2D::initSimulation()
 	segmentDomain(V, E, true);
 	D.VertexVel.resize(D.V.rows(), D.V.cols());
 	D.VertexVel.setZero();
+
+	avgEdgeLength = igl::avg_edge_length(V, F);
+	
 }
 
 /*
@@ -285,7 +290,7 @@ void  MeltingHook2D::triangulateDomain(Eigen::MatrixXd V, Eigen::MatrixXi F, Eig
 	Eigen::MatrixXi F2;
 	//	convert3DVerticesTo2D(V, V2D);
 	Eigen::MatrixXd H;
-	igl::triangle::triangulate(V, E, H, "a1.0q", V2, F2);
+	igl::triangle::triangulate(V, E, H, "a0.5q", V2, F2);
 	convert2DVerticesTo3D(V2, V);
 	D.V = V;
 	D.F = F2;
@@ -300,30 +305,46 @@ void  MeltingHook2D::updateDomain()
 	//Save previous version of mesh
 	Eigen::MatrixXd V = D.V;
 	Eigen::MatrixXi F = D.F;
-
+	Eigen::MatrixXd V2; 
+	Eigen::MatrixXi E2; 
+	Eigen::VectorXd T2;
+	Eigen::MatrixXi B2;
+	mergeVertices(V2, E2, T2, B2);
 	//re triangulate domain
-	retriangulateDomain();
+	retriangulateDomain(V2, E2, B2, F);
+
+	D.V = V2;
+	D.F = F;
+	D.T = T2;
+	D.Boundary.E = B2;
+	D.I.E = E2;
 	//re segment domain
-	segmentDomain(V, D.I.LoopE, false);
+	segmentDomain(D.V, D.I.E, false);
 
 }
 
+void MeltingHook2D::mergeVertices(Eigen::MatrixXd& V2, Eigen::MatrixXi& E2, Eigen::VectorXd& T2, Eigen::MatrixXi& B2)
+{
+	//For now let's just do itnerface vertices
+	double minEdgeLength = minLengthCoefficient * avgEdgeLength;
+	D.mergeInterfaceVertices(V2, E2, T2, B2, minEdgeLength);
+}
 
-void  MeltingHook2D::retriangulateDomain()
+void  MeltingHook2D::retriangulateDomain(Eigen::MatrixXd& V, Eigen::MatrixXi& E,  Eigen::MatrixXi& B, Eigen::MatrixXi& F)
 {
 
 	Eigen::MatrixXi boundaryEdges;
 
-	boundaryEdges.resize(D.Boundary.E.rows() + D.I.E.rows(), D.I.E.cols());
-	boundaryEdges << D.Boundary.E, D.I.E;
+	boundaryEdges.resize(B.rows() + E.rows(), 2);
+	boundaryEdges << E, B;
 	//horizontal edges(easy)
 	Eigen::MatrixXd V2D, V2;
 	Eigen::MatrixXi F2;
-	convert3DVerticesTo2D(D.V, V2D);
+	convert3DVerticesTo2D(V, V2D);
 	Eigen::MatrixXd H;
-	igl::triangle::triangulate(V2D, boundaryEdges, H, "a0.25qYY", V2, F2);
-	convert2DVerticesTo3D(V2, D.V);
-	D.F = F2;
+	igl::triangle::triangulate(V2D, boundaryEdges, H, "a0.5qY", V2, F);
+	convert2DVerticesTo3D(V2, V);
+	
 	//	D.VGrad = Eigen::MatrixXd::Zero(D.V.rows(), D.V.cols());
 	//	D.VN = Eigen::MatrixXd::Zero(D.V.rows(), D.V.cols());
 }
@@ -358,6 +379,7 @@ void MeltingHook2D::drawGUI(igl::opengl::glfw::imgui::ImGuiMenu &menu)
 		ImGui::SliderFloat("dt", &dt, 1e-6, 1e1, "%.5f", 10.0f);
 		ImGui::SliderFloat("lambda", &D.lambda, 0, 1e2, "%.2f", 10.0f);
 		ImGui::SliderFloat("phi", &phi, 0, 100);
+		ImGui::SliderFloat("Length Coeff", &minLengthCoefficient, 0.01, 0.5, "%.3f", 10.0f);
 
 	}
 	

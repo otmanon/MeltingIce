@@ -92,7 +92,7 @@ struct Domain
 	SubDomain L;
 
 
-	float lambda = 0.1;
+	float lambda = 0.01;
 
 	float maxX, maxY, minX, minY;
 
@@ -206,4 +206,9 @@ struct Domain
 	Projects list of vectors to a corresponding list of normals
 	*/
 	Eigen::VectorXd projectVecs2Normals(Eigen::MatrixXd& vectors, Eigen::MatrixXd& normals);
+
+	/*
+	Goes through interface vertices and if they are too close, make them one
+	*/
+	void mergeInterfaceVertices(Eigen::MatrixXd& V2, Eigen::MatrixXi& E2, Eigen::VectorXd& T2, Eigen::MatrixXi& B2, double minLength);
 };

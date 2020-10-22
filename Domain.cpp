@@ -13,6 +13,7 @@
 #include <igl/setdiff.h>
 #include <igl/point_simplex_squared_distance.h>
 
+
 Eigen::MatrixXd make2D(Eigen::MatrixXd mat)
 {
 	Eigen::MatrixXd mat2D(mat.rows(), 2);
@@ -433,6 +434,127 @@ Eigen::VectorXd flattenMat2Vec(Eigen::MatrixXd mat)
 	}
 
 	return vec;
+}
+
+void Domain::mergeInterfaceVertices(Eigen::MatrixXd& V2, Eigen::MatrixXi& E2, Eigen::VectorXd& T2, Eigen::MatrixXi& B2, double minLength)
+{
+	typedef Eigen::Vector2i ViPair;
+	int v1i, v2i;
+	double length;
+	std::vector<ViPair> deletePairs;
+	ViPair pair;
+	Eigen::VectorXi R = Eigen::VectorXi::Zero(V.rows());
+
+	//Get all vertex pairs that are too close to each other
+	for (int i = 0; i < I.E.rows(); i++)
+	{
+		v1i = I.E(i, 0);
+		v2i = I.E(i, 1);
+		length = edgeLength(v1i, v2i);
+
+		if (length < minLength)
+		{
+			pair << v1i, v2i;
+			deletePairs.push_back(pair);
+			R(v1i) = 1;
+			R(v2i) = 1;
+		}
+	}
+	if (deletePairs.size() == 0)
+	{
+		V2 = V;
+		E2 = I.LoopE;
+		T2 = T;
+		B2 = Boundary.E;
+		return;
+	}
+
+	//populate deleteEdges with info from deletePairs
+	Eigen::MatrixXi deleteEdges(deletePairs.size(), 2);
+	for (int i = 0; i < deleteEdges.rows(); i++)
+		deleteEdges.row(i) = deletePairs[i];
+	Eigen::VectorXi deleteVertices;
+	igl::unique( deleteEdges, deleteVertices);
+
+
+	//Introduce new V matrix and new E matrix... and don't forget corresponding temp
+	V2.resize(V.rows() - deleteVertices.rows() + deleteEdges.rows(), 3);
+	T2.resize(V2.rows());
+
+	Eigen::VectorXi newVMappings(V.rows());		//Useful for finding out what index an old vertex got mapped to
+												//If vertex at entry i in V still exists, the value at i is the new index of that vertex
+												//If it doesn't exist, the value at i is the negative new index. 
+	int index = 0;
+	//fill out new V2 matrix
+	for (int i = 0; i < V.rows(); i++)
+	{
+		if (R(i) == 0)		//we are keeping this vertex
+		{
+			V2.row(index) = V.row(i);
+			T2(index) = T(i);
+			newVMappings(i) = index;
+			index++;
+		}
+	}
+	Eigen::Vector3d newVert;
+	double newTemp;
+	//not done V2 matrix... now we add new vertices at the end
+	for (int i = 0; i < deleteEdges.rows(); i++)
+	{
+		v1i = deleteEdges(i, 0);
+		v2i = deleteEdges(i, 1);
+		newVert = (V.row(v1i) + V.row(v2i))* 0.5;		//average 2 vertex positions
+		newTemp = (T(deleteEdges(i, 0)) + T(deleteEdges(i, 1))) * 0.5;
+		V2.row(index) = newVert;
+		T2(index) = newTemp;
+		newVMappings(v1i) = -index;
+		newVMappings(v2i) = -index;
+		index++;
+	}
+	
+	E2.resize(I.E.rows() - deleteVertices.rows() + deleteEdges.rows(), 2);
+	//Now we have to adjust the edges array... Luckily we have newVMappings to help us figure out 
+	//where all the vertex indeces get mapped to.
+	index = 0;
+	int newV1i, newV2i;
+	for (int i = 0; i < I.E.rows(); i++)
+	{
+		v1i = I.LoopE(i, 0);
+		v2i = I.LoopE(i, 1);
+
+		//see where these indeces got mapped to 
+		newV1i = newVMappings(v1i);			//take absolute value of this, as negative sign means it was mapped to new vertex
+		newV2i = newVMappings(v2i);
+		if (newV1i < 0.0 && newV2i < 0.0)
+		{
+			continue;
+		}
+		newV1i = (newV1i < 0) ? -newV1i : newV1i;
+		newV2i = (newV2i < 0) ? -newV2i : newV2i;
+		
+		E2(index, 0) = newV1i;
+		E2(index, 1) = newV2i;
+		index++;
+	}
+	
+	//Last annoying piece is to recover boundary edges
+	B2.resize(Boundary.E.rows(), 2);
+	index = 0;
+	for (int i = 0; i < B2.rows(); i++)
+	{
+		v1i = Boundary.E(i, 0);
+		v2i = Boundary.E(i, 1);
+		newV1i = newVMappings(v1i);			//always gonna exist... boundary does not shrink
+		newV2i = newVMappings(v2i);
+		B2(index, 0) = newV1i;
+		B2(index, 1) = newV2i;
+		index++;
+	}
+	
+	
+	
+	
+
 }
 
 

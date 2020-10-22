@@ -26,7 +26,10 @@ private:
 
 	float vis_scale = 0.10;
 	float phi = 50; //flux applied at each edge
-	float dt = 1e-5; //timestep
+	float dt = 1e-2; //timestep
+
+	float minLengthCoefficient = 0.05;	//to get minEdgeLength, multiply avgEdgeLength by coefficient
+	double avgEdgeLength = 0.0;
 
 	Eigen::MatrixXd origV; //original mesh description. Remember it when resetting
 	Eigen::MatrixXi origF;
@@ -92,13 +95,24 @@ public:
 	*/
 	void updateDomain();
 
+
 	/*
 	For all interface Edges, finds the two corresponding Face indices in the globalF that surrounds each edge
 	Useful for calculating interface normals
 	*/
 	void MeltingHook2D::interfaceEdgesToFaceAdjacency(Eigen::MatrixXi& solidF, Eigen::VectorXd & W);
 
-	void retriangulateDomain();
+	/*
+	Retriangulates domain using new vertices V, with interface Edges E, and boundary edges B... fills out and returns F and V
+
+	*/
+	void retriangulateDomain(Eigen::MatrixXd& V, Eigen::MatrixXi& E, Eigen::MatrixXi& B, Eigen::MatrixXi& F);
+
+	/*
+	Checks if any edge is too small in length. If it is, join both those vertices into one.
+	Note: If boundary vertex, care needs to be taken to remove/add vertices to interface as appropriate
+	*/
+	void mergeVertices(Eigen::MatrixXd& V2, Eigen::MatrixXi& E2, Eigen::VectorXd& T2, Eigen::MatrixXi& B2);
 
 	/*
 	For each vertex index in the interface, give it a new local index. Used so that our sparse solve isn't so large
