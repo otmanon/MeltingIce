@@ -12,6 +12,7 @@
 #include <igl/colon.h>
 #include <igl/setdiff.h>
 #include <igl/point_simplex_squared_distance.h>
+#include <igl/invert_diag.h>
 
 
 Eigen::MatrixXd make2D(Eigen::MatrixXd mat)
@@ -552,10 +553,8 @@ void Domain::mergeInterfaceVertices(Eigen::MatrixXd& V2, Eigen::MatrixXi& E2, Ei
 	}
 	
 	
-	
-	
-
 }
+
 
 
 
@@ -628,3 +627,142 @@ Eigen::VectorXd Domain::projectVecs2Normals(Eigen::MatrixXd& vecs, Eigen::Matrix
 	return projections;
 }
 
+
+void Domain::calculateCurvature(Eigen::MatrixXd & V, Eigen::MatrixXi & E)
+{
+	//getLocalV and localE
+	Eigen::MatrixXd localV;
+	Eigen::MatrixXi localE;
+	getLocalVE(localV, localE, I.globalToLocalV, I.Vi, V, E);
+	//Convert V and E to local.
+	Eigen::SparseMatrix<double> C, M, Minv;
+	fd_Laplacian(C, M, localV, localE);
+	igl::invert_diag(M, Minv);
+
+	Eigen::MatrixXd curvatureNormals = Minv * C * V;
+
+	Eigen::MatrixXd vertNormals;
+	calculateInterfaceVertexNormals(vertNormals, localV, localE, I.NormalsE);
+	
+	toGlobal(I.curvatureNormals, curvatureNormals, I.localToGlobalV, V.rows());
+
+	//convert I.curvatureNormals to global.
+}
+
+void Domain::calculateEdgeLengths(Eigen::VectorXd L, Eigen::MatrixXd & V, Eigen::MatrixXi E)
+{
+	L.resize(E.rows(), 1);
+	Eigen::Vector3d disp;
+	for (int i = 0; i < E.rows(); i++)
+	{
+		disp = V.row(E(i, 0)) - V.row(E(i, 1));
+		L(i) = disp.norm();
+	}
+}
+
+void Domain::fd_Laplacian(Eigen::SparseMatrix<double> & C, Eigen::SparseMatrix<double> & M, Eigen::MatrixXd & V, Eigen::MatrixXi & E)
+{
+	Eigen::VectorXd edgeLengths;
+	calculateEdgeLengths(edgeLengths, V, E);
+	Eigen::VectorXd areaWLenghts(V.rows(), 1); //avg area lengths at each vertex
+	areaWLenghts.setZero();
+	int v1i, v2i;
+	double length;
+	for (int i = 0; i < E.rows(); i++)
+	{
+		v1i = E(i, 0);
+		v2i = E(i, 1);
+		length = edgeLengths(i);
+		areaWLenghts(v1i) += length * 0.5;
+		areaWLenghts(v2i) += length * 0.5;
+	}
+	M.resize(V.rows(), V.rows());
+	M.setZero();
+	M.diagonal() = areaWLenghts;
+
+	C.resize(V.rows(), V.rows());
+	C.setZero();
+
+	typedef Eigen::Triplet<double> T;
+	std::vector<T> triplets;
+	triplets.reserve(E.rows());
+	//Initialize only 1 off diagonal entries of C with triplets
+	for (int i = 0; i < E.rows(); i++)
+	{
+		v1i = E(i, 0);
+		v2i = E(i, 1);
+		
+		triplets.push_back(T(v1i, v2i, edgeLengths(i)));
+		triplets.push_back(T(v2i, v1i, edgeLengths(i)));
+
+		triplets.push_back(T(v1i, v1i, -edgeLengths(i)));
+		triplets.push_back(T(v2i, v2i, -edgeLengths(i)));
+	}
+	C.setFromTriplets(triplets.begin(), triplets.end());
+
+}
+
+void Domain::getLocalVE(Eigen::MatrixXd & localV, Eigen::MatrixXi & localE, Eigen::VectorXi & global2local, Eigen::VectorXi & interfaceVindices, Eigen::MatrixXd & V, Eigen::MatrixXi & E)
+{
+	localV.resize(global2local.maxCoeff()+1, 3);
+	localE.resizeLike(E);
+
+	int localIndex, globalIndex;
+	for (int i = 0; i < interfaceVindices.rows(); i++)
+	{
+		globalIndex = interfaceVindices(i);
+		global2local(globalIndex);
+		localV.row(localIndex) = V.row(globalIndex);
+	}
+	int v1iG, v2iG, v1iL, v2iL;
+	for (int i = 0; i < E.rows(); i++)
+	{
+		v1iG = E(i, 0);
+		v2iG = E(i, 1);
+
+		v1iL = global2local(v1iG);
+		v2iL = global2local(v2iG);
+		localE.row(i) << v1iL, v2iL;
+	}
+
+}
+
+void Domain::toGlobal(Eigen::MatrixXd & globalVecs, Eigen::MatrixXd & localVecs, Eigen::VectorXi & local2Global, int numV)
+{
+	globalVecs.resize(numV, 3);
+	globalVecs.setZero();
+	int localIndex, globalIndex;
+	for (int i = 0; i < localVecs.rows(); i++)
+	{
+		localIndex = i;
+		globalIndex = local2Global(i);
+
+		globalVecs.row(globalIndex) = localVecs.row(localIndex);
+	}
+}
+
+void Domain::calculateInterfaceVertexNormals(Eigen::MatrixXd& vertNormals, Eigen::MatrixXd & V, Eigen::MatrixXi & E, Eigen::MatrixXd & edgeNormals)
+{
+	vertNormals.resizeLike(V);
+	vertNormals.setZero();
+	Eigen::VectorXd W(V.rows()), edgeLengths;
+	calculateEdgeLengths(edgeLengths, V, E);
+	int v1i, v2i;
+	double length;
+	for (int i = 0; i < E.rows(); i++)
+	{
+		v1i = E(i, 0);
+		v2i = E(i, 1);
+		length = edgeLengths(i);
+
+		vertNormals.row(v1i) += edgeNormals * length;
+		vertNormals.row(v2i) += edgeNormals * length;
+
+		W(v1i) += length;
+		W(v2i) += length;
+	}
+	for (int i = 0; i < W.rows(); i++)
+	{
+		vertNormals.row(i) /= W(i);
+	}
+}

@@ -1,0 +1,17 @@
+function [C, M] = fd_laplacian(V, E)
+%FD_LAPLACIAN Calculates the discrete laplacian matrix L = M^-1C using finite
+%differences
+% Inputs
+%   V - vertices around closed loop
+%   E - Edges of indices onto those vertices
+%Outptuts
+    [rows, cols] = size(E);
+    lengths = edgeLengths(V, E)
+    
+end
+
+function lengths = edgeLengths(V, E)
+    [rows, cols] = size(E);
+    lengths = zeros(rows, 1)
+  
+end

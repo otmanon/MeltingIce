@@ -22,13 +22,13 @@ private:
 	bool stepping_flag = false;
 	bool melting_flag = true;
 	bool diffusion_flag = true;
-	bool retriangulate = false;
+	bool retriangulate = true;
 
 	float vis_scale = 0.10;
 	float phi = 50; //flux applied at each edge
-	float dt = 1e-2; //timestep
+	float dt = 3e-1; //timestep
 
-	float minLengthCoefficient = 0.05;	//to get minEdgeLength, multiply avgEdgeLength by coefficient
+	float minLengthCoefficient = 0.5;	//to get minEdgeLength, multiply avgEdgeLength by coefficient
 	double avgEdgeLength = 0.0;
 
 	Eigen::MatrixXd origV; //original mesh description. Remember it when resetting

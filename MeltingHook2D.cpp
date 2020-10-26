@@ -155,6 +155,8 @@ void MeltingHook2D::interfaceEdgesToFaceAdjacency(Eigen::MatrixXi& solidF, Eigen
 	Eigen::MatrixXi rows;
 	igl::slice(D.EV, D.I.Ei, cols, D.I.E);
 	D.I.LoopE = interfaceEdges;
+
+	igl::unique(D.I.E, D.I.Vi);
 }
 
 void MeltingHook2D::interfaceGlobalToLocalVertexMappings()
@@ -209,30 +211,28 @@ void  MeltingHook2D::segmentDomain(Eigen::MatrixXd V, Eigen::MatrixXi E, bool in
 	igl::slice_into(interfaceT, interfaceIndices, 1, T);
 	igl::slice_into(D.Boundary.T, D.Boundary.Vi, T);
 	
+	//Get faces adjacent to interface edges. Useful for normal/gradient comp
+	interfaceEdgesToFaceAdjacency( solidF, W );
+	
+	//mapping from local to global vertices for interface. 
+	interfaceGlobalToLocalVertexMappings();
 
 	//Fill out subdomain info
 	D.S.F = solidF;
 	D.L.F = liquidF;
+
+	D.S.Vi = interiorIndices;
+	D.S.T = interiorT;
+
+	D.L.Vi = exteriorIndices;
+	D.L.T = exteriorT;
+
+	D.I.Vi = interfaceIndices;
+
+	D.I.T = interfaceT;
+
 	if (init)
-	{
-		D.S.Vi = interiorIndices;
-		D.S.T = interiorT;
-
-		D.L.Vi = exteriorIndices;
-		D.L.T = exteriorT;
-
-		D.I.Vi = interfaceIndices;
-		
-		D.I.T = interfaceT;
-
 		D.T = T;
-		
-	}
-
-	interfaceEdgesToFaceAdjacency( solidF, W );
-	
-	interfaceGlobalToLocalVertexMappings();
-
 
 	//Create globalToLocal mappings between interface vertices and global vertices
 
@@ -342,7 +342,7 @@ void  MeltingHook2D::retriangulateDomain(Eigen::MatrixXd& V, Eigen::MatrixXi& E,
 	Eigen::MatrixXi F2;
 	convert3DVerticesTo2D(V, V2D);
 	Eigen::MatrixXd H;
-	igl::triangle::triangulate(V2D, boundaryEdges, H, "a0.5qY", V2, F);
+	igl::triangle::triangulate(V2D, boundaryEdges, H, "YY", V2, F);
 	convert2DVerticesTo3D(V2, V);
 	
 	//	D.VGrad = Eigen::MatrixXd::Zero(D.V.rows(), D.V.cols());
@@ -377,7 +377,7 @@ void MeltingHook2D::drawGUI(igl::opengl::glfw::imgui::ImGuiMenu &menu)
 		ImGui::Checkbox("do melting", &melting_flag);
 		ImGui::Checkbox("re-triangulate", &retriangulate);
 		ImGui::SliderFloat("dt", &dt, 1e-6, 1e1, "%.5f", 10.0f);
-		ImGui::SliderFloat("lambda", &D.lambda, 0, 1e2, "%.2f", 10.0f);
+		ImGui::SliderFloat("lambda", &D.lambda, 0, 1e3, "%.3f", 1.0f);
 		ImGui::SliderFloat("phi", &phi, 0, 100);
 		ImGui::SliderFloat("Length Coeff", &minLengthCoefficient, 0.01, 0.5, "%.3f", 10.0f);
 
@@ -534,7 +534,8 @@ void MeltingHook2D::renderRenderGeometry(igl::opengl::glfw::Viewer &viewer)
 	if (renderVertexVel)
 	{
 		const Eigen::RowVector3d white(1, 1, 1);
-		viewer.data().add_edges(D.V, D.V + vis_scale * D.VertexVel, white);
+		if (D.V.rows() == D.VertexVel.rows())
+			viewer.data().add_edges(D.V, D.V + vis_scale * D.VertexVel, white);
 
 	}
 	if (renderInterpolatedVel)

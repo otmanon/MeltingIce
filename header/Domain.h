@@ -41,11 +41,12 @@ struct Interface
 	Eigen::VectorXi LoopVIndices;	//entries i will hold i'th vertex around loop. 
 	Eigen::MatrixXi LoopVPositions; //will hold positions for each vertex i. ordered with loopVIndi
 
-	Eigen::VectorXi globalToLocalV;
-	Eigen::VectorXi localToGlobalV;
+	Eigen::VectorXi globalToLocalV;		//vector, at global index, returns local index
+	Eigen::VectorXi localToGlobalV;		//vector, at local index, returns global coordinate
 
-	Eigen::VectorXi globalToLocalE;
-	Eigen::VectorXi localToGlobalE;
+	Eigen::MatrixXd vertBasedNormals; //ordered with local V storings
+	Eigen::VectorXd signedCurvature;	//ordered with local V storings.
+	Eigen::MatrixXd curvatureNormals;	//ordered with local V storings.
 
 	Eigen::MatrixXd MidV;//contains midpoitns of all boundary edges
 
@@ -92,7 +93,7 @@ struct Domain
 	SubDomain L;
 
 
-	float lambda = 0.01;
+	float lambda = 0.001;
 
 	float maxX, maxY, minX, minY;
 
@@ -211,4 +212,35 @@ struct Domain
 	Goes through interface vertices and if they are too close, make them one
 	*/
 	void mergeInterfaceVertices(Eigen::MatrixXd& V2, Eigen::MatrixXi& E2, Eigen::VectorXd& T2, Eigen::MatrixXi& B2, double minLength);
+
+	/*
+	Calculate Curvature Values
+	*/
+	void calculateCurvature(Eigen::MatrixXd& V, Eigen::MatrixXi& E);
+
+	/*
+	EdgeLengths
+	*/
+	void calculateEdgeLengths(Eigen::VectorXd L, Eigen::MatrixXd& V, Eigen::MatrixXi E);
+
+	/*
+	Calculates laplacian for 1D curve embedded in arbitrary Nd space.
+	*/
+	void fd_Laplacian(Eigen::SparseMatrix<double>& C, Eigen::SparseMatrix<double>& M, Eigen::MatrixXd& V, Eigen::MatrixXi& E);
+
+	/*
+	converts globalVertices and edges to localVertices and edges.
+	*/
+	void getLocalVE(Eigen::MatrixXd& localV, Eigen::MatrixXi& localE, Eigen::VectorXi & global2local, Eigen::VectorXi& interfaceVindices, Eigen::MatrixXd& V, Eigen::MatrixXi& E);
+	
+	/*
+	Brings a value stored at each vertex from local to global vertex coords
+	*/
+	void toGlobal(Eigen::MatrixXd& globalVecs, Eigen::MatrixXd& localVecs, Eigen::VectorXi& local2Global, int numV);
+
+	/*
+	Gets the per vertex normals by weighing each incident edge normal by their length.
+	*/
+	void calculateInterfaceVertexNormals(Eigen::MatrixXd& vertNormals, Eigen::MatrixXd& V, Eigen::MatrixXi& E, Eigen::MatrixXd & edgeNormals);
+
 };
