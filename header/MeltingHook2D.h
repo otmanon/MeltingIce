@@ -1,8 +1,6 @@
 #include "PhysicsHook.h"
 #include "Domain.h"
 
-
-
 class MeltingHook2D : public PhysicsHook
 {
 private:
@@ -28,7 +26,7 @@ private:
 	float phi = 50; //flux applied at each edge
 	float dt = 3e-1; //timestep
 
-	float minLengthCoefficient = 0.5;	//to get minEdgeLength, multiply avgEdgeLength by coefficient
+	float minLengthCoefficient = 0.01;	//to get minEdgeLength, multiply avgEdgeLength by coefficient
 	double avgEdgeLength = 0.0;
 
 	Eigen::MatrixXd origV; //original mesh description. Remember it when resetting

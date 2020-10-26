@@ -45,7 +45,7 @@ struct Interface
 	Eigen::VectorXi localToGlobalV;		//vector, at local index, returns global coordinate
 
 	Eigen::MatrixXd vertBasedNormals; //ordered with local V storings
-	Eigen::VectorXd signedCurvature;	//ordered with local V storings.
+	Eigen::MatrixXd signedCurvature;	//ordered with local V storings.
 	Eigen::MatrixXd curvatureNormals;	//ordered with local V storings.
 
 	Eigen::MatrixXd MidV;//contains midpoitns of all boundary edges
@@ -79,8 +79,6 @@ struct Domain
 	Eigen::VectorXd T; // Temperature at each vertex
 	Eigen::VectorXd Tb;	// temperature at each boundary vertex
 
-
-	
 	Eigen::VectorXd W; //Winding number...
 
 	Eigen::MatrixXd NormalsE;	//Normals for each edge, pointing from solid to liquid,

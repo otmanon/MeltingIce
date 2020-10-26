@@ -35,7 +35,7 @@ void  MeltingHook2D::initSimulation()
 	Eigen::MatrixXi F, E;
 	//igl::readOFF(modelFilepath, V, F);
 	igl::readOBJ(modelFilepath, V, F);
-	V *= 0.25;
+	V *= 0.50;
 	igl::boundary_facets(F, E); //Fills E with boundary edges... including nonmanifold ones which is what we have in 2D.
 
 	initMesh.V *= 1;

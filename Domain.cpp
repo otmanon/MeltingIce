@@ -329,7 +329,7 @@ void Domain::calculateQuantities(float latentHeat)
 	calculateInterfaceMidpoints();
 	calculateInterfaceNormals();
 	calculateInterfaceVp(latentHeat);
-
+	calculateCurvature(V, I.E);
 	interface2GlobalValues(); //move everything to the global domain
 
 	solveForVertexVelSmart();
@@ -643,8 +643,14 @@ void Domain::calculateCurvature(Eigen::MatrixXd & V, Eigen::MatrixXi & E)
 
 	Eigen::MatrixXd vertNormals;
 	calculateInterfaceVertexNormals(vertNormals, localV, localE, I.NormalsE);
-	
+
+	Eigen::MatrixXd sign = vertNormals * curvatureNormals;
+	sign.rowwise().normalize();
+
+	Eigen::MatrixXd curvature = curvatureNormals.rowwise().norm()*sign.rowwise().sum();
+
 	toGlobal(I.curvatureNormals, curvatureNormals, I.localToGlobalV, V.rows());
+	toGlobal(I.signedCurvature, curvature, I.localToGlobalV, V.rows());
 
 	//convert I.curvatureNormals to global.
 }
@@ -765,4 +771,5 @@ void Domain::calculateInterfaceVertexNormals(Eigen::MatrixXd& vertNormals, Eigen
 	{
 		vertNormals.row(i) /= W(i);
 	}
+	vertNormals.rowwise().normalize();
 }
