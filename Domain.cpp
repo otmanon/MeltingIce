@@ -38,7 +38,7 @@ void Domain::diffuseHeat(float dt)
 	Eigen::VectorXd  boundaryTemperatures;
 
 	boundaryIndices.resize(Boundary.Vi.rows() + I.Vi.rows(), 1);
-	boundaryIndices << Boundary.Vi, I.Vi;
+	boundaryIndices << Boundary.Vi, I.localToGlobalV;
 	boundaryTemperatures.resize(boundaryIndices.rows(), 1);
 	boundaryTemperatures << Boundary.T, I.T;
 
@@ -326,10 +326,7 @@ float Domain::edgeLength(int v1i, int v2i)
 void Domain::calculateQuantities(float latentHeat)
 {
 	calculateGradient(); //calculate and fill FGRAD
-	calculateInterfaceMidpoints();
-	calculateInterfaceNormals();
 	calculateInterfaceVp(latentHeat);
-	calculateCurvature(V, I.E);
 	interface2GlobalValues(); //move everything to the global domain
 
 	solveForVertexVelSmart();
@@ -404,8 +401,6 @@ void Domain::calculateInterfaceVp(float latentHeat)
 
 	}
 }
-
-
 
 void Domain::calculateGradient()
 {
@@ -551,12 +546,7 @@ void Domain::mergeInterfaceVertices(Eigen::MatrixXd& V2, Eigen::MatrixXi& E2, Ei
 		B2(index, 1) = newV2i;
 		index++;
 	}
-	
-	
 }
-
-
-
 
 Eigen::MatrixXd expandVec2Mat(Eigen::VectorXd vec, int cols)
 {
@@ -607,9 +597,7 @@ void Domain::calculateInterpolationAlongEdges()
 			counter++;
 			s += 1.0 / (numSamples + 2.0);
 		}
-
 	}
-
 }
 
 Eigen::VectorXd Domain::projectVecs2Normals(Eigen::MatrixXd& vecs, Eigen::MatrixXd& normals)
@@ -623,39 +611,68 @@ Eigen::VectorXd Domain::projectVecs2Normals(Eigen::MatrixXd& vecs, Eigen::Matrix
 		normal = normals.row(i);
 		projections(i) = normal.transpose()*vec;
 	}
-
 	return projections;
 }
 
 
-void Domain::calculateCurvature(Eigen::MatrixXd & V, Eigen::MatrixXi & E)
+void Domain::calculateCurvature(Eigen::MatrixXd& curvature, Eigen::MatrixXd & V, Eigen::MatrixXi & E)
 {
+
+
 	//getLocalV and localE
 	Eigen::MatrixXd localV;
 	Eigen::MatrixXi localE;
-	getLocalVE(localV, localE, I.globalToLocalV, I.Vi, V, E);
-	//Convert V and E to local.
-	Eigen::SparseMatrix<double> C, M, Minv;
-	fd_Laplacian(C, M, localV, localE);
-	igl::invert_diag(M, Minv);
+	getLocalVE(localV, localE, I.globalToLocalV, I.localToGlobalV, V, E);
+	curvature.resize(localV.rows(), 1);
+	curvature.setZero();
+	Eigen::MatrixXd disp(localE.rows(), 3);
+	Eigen::MatrixXi VETopology(localV.rows(), 2);
+	VETopology.setConstant(-1);
+	int v1i, v2i;
+	double pi = 3.14159;
+	Eigen::Vector3d d, n;
+	Eigen::Vector3d screenN(0, 0, -1);
+	double sign;
+	for (int i = 0; i < localE.rows(); i++)
+	{
+		v1i = localE(i, 0);
+		v2i = localE(i, 1);
+		d = (localV.row(v1i) - localV.row(v2i)).normalized();
+		n = I.NormalsE.row(i);
+		sign = n.cross(d).dot(screenN);
+		disp.row(i) = sign*d;
+		
+		if (VETopology(v1i, 0) < 0)
+		{
+			VETopology(v1i, 0) = i;
+		}
+		else
+		{
+			VETopology(v1i, 1) = i;
+		}
 
-	Eigen::MatrixXd curvatureNormals = Minv * C * V;
-
-	Eigen::MatrixXd vertNormals;
-	calculateInterfaceVertexNormals(vertNormals, localV, localE, I.NormalsE);
-
-	Eigen::MatrixXd sign = vertNormals * curvatureNormals;
-	sign.rowwise().normalize();
-
-	Eigen::MatrixXd curvature = curvatureNormals.rowwise().norm()*sign.rowwise().sum();
-
-	toGlobal(I.curvatureNormals, curvatureNormals, I.localToGlobalV, V.rows());
+		if (VETopology(v2i, 0) < 0)
+		{
+			VETopology(v2i, 0) = i;
+		}
+		else
+		{
+			VETopology(v2i, 1) = i;
+		}
+	}
+	int e1i, e2i;
+	for (int i = 0; i < localV.rows(); i++)
+	{
+		e1i = VETopology(i, 0);
+		e2i = VETopology(i, 1);
+		curvature(i, 0) = 1.0 - disp.row(e1i).dot(disp.row(e2i));
+	}
 	toGlobal(I.signedCurvature, curvature, I.localToGlobalV, V.rows());
-
-	//convert I.curvatureNormals to global.
+	
+	
 }
 
-void Domain::calculateEdgeLengths(Eigen::VectorXd L, Eigen::MatrixXd & V, Eigen::MatrixXi E)
+void Domain::calculateEdgeLengths(Eigen::VectorXd& L, Eigen::MatrixXd & V, Eigen::MatrixXi E)
 {
 	L.resize(E.rows(), 1);
 	Eigen::Vector3d disp;
@@ -668,6 +685,10 @@ void Domain::calculateEdgeLengths(Eigen::VectorXd L, Eigen::MatrixXd & V, Eigen:
 
 void Domain::fd_Laplacian(Eigen::SparseMatrix<double> & C, Eigen::SparseMatrix<double> & M, Eigen::MatrixXd & V, Eigen::MatrixXi & E)
 {
+	typedef Eigen::Triplet<double> T;
+	std::vector<T> triplets;
+	triplets.reserve(V.rows());
+
 	Eigen::VectorXd edgeLengths;
 	calculateEdgeLengths(edgeLengths, V, E);
 	Eigen::VectorXd areaWLenghts(V.rows(), 1); //avg area lengths at each vertex
@@ -681,16 +702,17 @@ void Domain::fd_Laplacian(Eigen::SparseMatrix<double> & C, Eigen::SparseMatrix<d
 		length = edgeLengths(i);
 		areaWLenghts(v1i) += length * 0.5;
 		areaWLenghts(v2i) += length * 0.5;
+
+		triplets.push_back(T(v1i, v1i, areaWLenghts(v1i)));
+		triplets.push_back(T(v2i, v2i, areaWLenghts(v2i)));
 	}
 	M.resize(V.rows(), V.rows());
-	M.setZero();
-	M.diagonal() = areaWLenghts;
+	M.setFromTriplets(triplets.begin(), triplets.end());
+	Eigen::MatrixXd MD(M);
+	triplets.clear();
 
 	C.resize(V.rows(), V.rows());
 	C.setZero();
-
-	typedef Eigen::Triplet<double> T;
-	std::vector<T> triplets;
 	triplets.reserve(E.rows());
 	//Initialize only 1 off diagonal entries of C with triplets
 	for (int i = 0; i < E.rows(); i++)
@@ -705,7 +727,7 @@ void Domain::fd_Laplacian(Eigen::SparseMatrix<double> & C, Eigen::SparseMatrix<d
 		triplets.push_back(T(v2i, v2i, -edgeLengths(i)));
 	}
 	C.setFromTriplets(triplets.begin(), triplets.end());
-
+	Eigen::MatrixXd CD(C);
 }
 
 void Domain::getLocalVE(Eigen::MatrixXd & localV, Eigen::MatrixXi & localE, Eigen::VectorXi & global2local, Eigen::VectorXi & interfaceVindices, Eigen::MatrixXd & V, Eigen::MatrixXi & E)
@@ -717,7 +739,7 @@ void Domain::getLocalVE(Eigen::MatrixXd & localV, Eigen::MatrixXi & localE, Eige
 	for (int i = 0; i < interfaceVindices.rows(); i++)
 	{
 		globalIndex = interfaceVindices(i);
-		global2local(globalIndex);
+		localIndex = global2local(globalIndex);
 		localV.row(localIndex) = V.row(globalIndex);
 	}
 	int v1iG, v2iG, v1iL, v2iL;
@@ -735,7 +757,7 @@ void Domain::getLocalVE(Eigen::MatrixXd & localV, Eigen::MatrixXi & localE, Eige
 
 void Domain::toGlobal(Eigen::MatrixXd & globalVecs, Eigen::MatrixXd & localVecs, Eigen::VectorXi & local2Global, int numV)
 {
-	globalVecs.resize(numV, 3);
+	globalVecs.resize(numV, localVecs.cols());
 	globalVecs.setZero();
 	int localIndex, globalIndex;
 	for (int i = 0; i < localVecs.rows(); i++)
@@ -752,6 +774,7 @@ void Domain::calculateInterfaceVertexNormals(Eigen::MatrixXd& vertNormals, Eigen
 	vertNormals.resizeLike(V);
 	vertNormals.setZero();
 	Eigen::VectorXd W(V.rows()), edgeLengths;
+	W.setZero();
 	calculateEdgeLengths(edgeLengths, V, E);
 	int v1i, v2i;
 	double length;
@@ -761,8 +784,8 @@ void Domain::calculateInterfaceVertexNormals(Eigen::MatrixXd& vertNormals, Eigen
 		v2i = E(i, 1);
 		length = edgeLengths(i);
 
-		vertNormals.row(v1i) += edgeNormals * length;
-		vertNormals.row(v2i) += edgeNormals * length;
+		vertNormals.row(v1i) = edgeNormals.row(i) * length;
+		vertNormals.row(v2i) = edgeNormals.row(i) * length;
 
 		W(v1i) += length;
 		W(v2i) += length;

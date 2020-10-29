@@ -35,7 +35,7 @@ void  MeltingHook2D::initSimulation()
 	Eigen::MatrixXi F, E;
 	//igl::readOFF(modelFilepath, V, F);
 	igl::readOBJ(modelFilepath, V, F);
-	V *= 0.50;
+	V *= 0.25;
 	igl::boundary_facets(F, E); //Fills E with boundary edges... including nonmanifold ones which is what we have in 2D.
 
 	initMesh.V *= 1;
@@ -44,9 +44,10 @@ void  MeltingHook2D::initSimulation()
 	segmentDomain(V, E, true);
 	D.VertexVel.resize(D.V.rows(), D.V.cols());
 	D.VertexVel.setZero();
-
+	D.I.curvatureNormals.resizeLike(D.V);
+	D.I.curvatureNormals.setZero();
 	avgEdgeLength = igl::avg_edge_length(V, F);
-	
+	D.calculateQuantities(1000);
 }
 
 /*
@@ -194,9 +195,12 @@ void  MeltingHook2D::segmentDomain(Eigen::MatrixXd V, Eigen::MatrixXi E, bool in
 
 	//set up interior/exterior Temperatures
 	Eigen::VectorXd interiorT = Eigen::VectorXd::Constant(interiorIndices.rows(), 0.0f);
-	Eigen::VectorXd interfaceT = Eigen::VectorXd::Constant(interfaceIndices.rows(), 0.0f);
+	Eigen::MatrixXd interfaceT = Eigen::VectorXd::Constant(interfaceIndices.rows(), 0.0f);
 	Eigen::VectorXd exteriorT = Eigen::VectorXd::Constant(exteriorIndices.rows(), 0.0f);
+	if (!init)
+		D.calculateCurvature(interfaceT, V, E);
 
+	interfaceT *= -D.meltingTempConstant;
 	// maybe unneeded
 	//Set bounding box indeces and temperatures
 	Eigen::VectorXd  boundaryT;
@@ -208,7 +212,7 @@ void  MeltingHook2D::segmentDomain(Eigen::MatrixXd V, Eigen::MatrixXi E, bool in
 	//Updates main T with subdomain Ts
 	igl::slice_into(interiorT, interiorIndices, 1, T);
 	igl::slice_into(exteriorT, exteriorIndices, 1, T);
-	igl::slice_into(interfaceT, interfaceIndices, 1, T);
+	igl::slice_into((Eigen::VectorXd)interfaceT, interfaceIndices, 1, T);
 	igl::slice_into(D.Boundary.T, D.Boundary.Vi, T);
 	
 	//Get faces adjacent to interface edges. Useful for normal/gradient comp
@@ -234,6 +238,8 @@ void  MeltingHook2D::segmentDomain(Eigen::MatrixXd V, Eigen::MatrixXi E, bool in
 	if (init)
 		D.T = T;
 
+	D.calculateInterfaceMidpoints();
+	D.calculateInterfaceNormals();
 	//Create globalToLocal mappings between interface vertices and global vertices
 
 }
@@ -290,7 +296,7 @@ void  MeltingHook2D::triangulateDomain(Eigen::MatrixXd V, Eigen::MatrixXi F, Eig
 	Eigen::MatrixXi F2;
 	//	convert3DVerticesTo2D(V, V2D);
 	Eigen::MatrixXd H;
-	igl::triangle::triangulate(V, E, H, "a0.5q", V2, F2);
+	igl::triangle::triangulate(V, E, H, "a0.1q", V2, F2);
 	convert2DVerticesTo3D(V2, V);
 	D.V = V;
 	D.F = F2;
@@ -368,6 +374,7 @@ void MeltingHook2D::drawGUI(igl::opengl::glfw::imgui::ImGuiMenu &menu)
 		ImGui::Checkbox("render Vp", &renderVp);
 		ImGui::Checkbox("render VertexVel", &renderVertexVel);
 		ImGui::Checkbox("Render Interpolated", &renderInterpolatedVel);
+		ImGui::Checkbox("Render Curvature", &renderCurvature);
 		ImGui::SliderFloat("vis scale", &vis_scale, 1e-2, 1e2, "%.8f", 10.0f);
 	}
 
@@ -378,8 +385,9 @@ void MeltingHook2D::drawGUI(igl::opengl::glfw::imgui::ImGuiMenu &menu)
 		ImGui::Checkbox("re-triangulate", &retriangulate);
 		ImGui::SliderFloat("dt", &dt, 1e-6, 1e1, "%.5f", 10.0f);
 		ImGui::SliderFloat("lambda", &D.lambda, 0, 1e3, "%.3f", 1.0f);
-		ImGui::SliderFloat("phi", &phi, 0, 100);
+		ImGui::SliderFloat("phi", &phi, -100000, 100000, "%.2f", 10.0f);
 		ImGui::SliderFloat("Length Coeff", &minLengthCoefficient, 0.01, 0.5, "%.3f", 10.0f);
+		ImGui::SliderFloat("Curvature Constant", &D.meltingTempConstant, -5, 5, "%.3f", 10.0f);
 
 	}
 	
@@ -453,7 +461,7 @@ void MeltingHook2D::explicitStep(float dt, float latentHeat)
 	if (diffusion_flag)
 	{
 		D.diffuseHeat(dt);
-		D.calculateQuantities(1000.0);
+		D.calculateQuantities(phi);
 		if (renderInterpolatedVel)
 			D.calculateInterpolationAlongEdges();
 		
@@ -488,7 +496,9 @@ void  MeltingHook2D::updateRenderGeometry()
 {
 	//V and T always the same
 	renderV = D.V;
-	renderT = D.T;
+	if (renderCurvature && D.I.signedCurvature.rows() > 0)
+		renderT = D.I.signedCurvature;
+	else renderT = D.T;
 
 	if (renderFluid && !renderSolid)
 		renderF = D.L.F;
@@ -507,8 +517,10 @@ void MeltingHook2D::renderRenderGeometry(igl::opengl::glfw::Viewer &viewer)
 	viewer.data().clear();
 	//	viewer.data().clear_edges();
 	viewer.data().set_mesh(renderV, renderF);
-	viewer.data().set_data(renderT, 0, 10);
-
+	if (renderCurvature)
+		viewer.data().set_data(renderT, 0, 1);
+	else
+		viewer.data().set_data(renderT, -10, 10);
 	if (renderTGrad)
 	{
 		const Eigen::RowVector3d green(0, 1, 0);
@@ -542,5 +554,11 @@ void MeltingHook2D::renderRenderGeometry(igl::opengl::glfw::Viewer &viewer)
 	{
 		const Eigen::RowVector3d red(1, 0, 0);
 		viewer.data().add_edges(D.I.intX, D.I.intX + vis_scale * D.I.intV, red);
+	}
+	if (renderCurvature)
+	{
+		const Eigen::RowVector3d white(1, 1, 1);
+		//if (D.V.rows() == D.VertexVel.rows())
+			//viewer.data().add_edges(D.V, D.V + vis_scale * D.I.curvatureNormals, white);
 	}
 }

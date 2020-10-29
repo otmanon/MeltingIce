@@ -13,8 +13,9 @@ private:
 	bool renderTGrad = false;
 	bool renderVp = false;
 	bool renderGlobal = false;
-	bool renderVertexVel = true;
+	bool renderVertexVel = false;
 	bool renderInterpolatedVel = true;
+	bool renderCurvature = false;
 
 	bool stepping_mode = false;
 	bool stepping_flag = false;
@@ -24,7 +25,7 @@ private:
 
 	float vis_scale = 0.10;
 	float phi = 50; //flux applied at each edge
-	float dt = 3e-1; //timestep
+	float dt = 1e-2; //timestep
 
 	float minLengthCoefficient = 0.01;	//to get minEdgeLength, multiply avgEdgeLength by coefficient
 	double avgEdgeLength = 0.0;

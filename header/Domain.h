@@ -46,6 +46,8 @@ struct Interface
 
 	Eigen::MatrixXd vertBasedNormals; //ordered with local V storings
 	Eigen::MatrixXd signedCurvature;	//ordered with local V storings.
+	Eigen::MatrixXd localCurvature;	//ordered with local V storings.
+
 	Eigen::MatrixXd curvatureNormals;	//ordered with local V storings.
 
 	Eigen::MatrixXd MidV;//contains midpoitns of all boundary edges
@@ -92,6 +94,7 @@ struct Domain
 
 
 	float lambda = 0.001;
+	float meltingTempConstant = 0.01;
 
 	float maxX, maxY, minX, minY;
 
@@ -214,12 +217,12 @@ struct Domain
 	/*
 	Calculate Curvature Values
 	*/
-	void calculateCurvature(Eigen::MatrixXd& V, Eigen::MatrixXi& E);
+	void calculateCurvature(Eigen::MatrixXd& curvature, Eigen::MatrixXd& V, Eigen::MatrixXi& E);
 
 	/*
 	EdgeLengths
 	*/
-	void calculateEdgeLengths(Eigen::VectorXd L, Eigen::MatrixXd& V, Eigen::MatrixXi E);
+	void calculateEdgeLengths(Eigen::VectorXd& L, Eigen::MatrixXd& V, Eigen::MatrixXi E);
 
 	/*
 	Calculates laplacian for 1D curve embedded in arbitrary Nd space.
